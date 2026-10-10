@@ -10,13 +10,13 @@
 //|   - هدف ربح 10 دولارات (خمسة أضعاف الخسارة)                      |
 //|   - لا خروج زمني: الصفقة تنتهي بالستوب أو الهدف فقط             |
 //|   - فترات طويلة (2.00): 30 دقيقة بين الصفقات + ساعة انتظار بعد أي خسارة
-//|   - جديد 3.01: اللوت الافتراضي 0.1 (الحد الأدنى للمنصة) | 3.00: صيد الانهيار الحي + قفل تعادل + تتبع أرباح     |
+//|   - جديد 3.02: إصلاح منع فتح الصفقات (عتبة سبايك تلقائية + قفل الاستحقاق أثناء الانهيار) + سبب عدم الدخول في اللوحة | 3.01: لوت 0.1 + قفل تعادل + تتبع أرباح     |
 //|                                                                  |
 //|  ⚠ تحذير: المؤشرات الاصطناعية عالية المخاطر. جرّب على حساب       |
 //|     تجريبي أولاً ولا تخاطر بمال لا تتحمل خسارته.                 |
 //+------------------------------------------------------------------+
 #property copyright "PainX Sell EA"
-#property version   "3.01"
+#property version   "3.02"
 #property description "PainX: بيع فقط | صيد الانهيار الحي | خسارة 3$ | هدف 10$ | حماية أرباح"
 
 #include <Trade\Trade.mqh>
@@ -50,7 +50,7 @@ input double InpTakeProfitUSD     = 10.0;     // هدف الربح بالدول�
 input double InpMaxDailyLossPct   = 5.0;      // إيقاف يومي عند خسارة % (0 = معطل)
 
 input group "====== توقيت الدخول (عداد السبايك) ======"
-input int    InpSpikeMinPoints    = 0;        // أقل حجم سبايك هابط يُحتسب (0 = أي تيك هابط)
+input int    InpSpikeMinPoints    = 0;        // أقل حجم سبايك هابط بالنقاط (0 = تلقائي من التاريخ)
 input int    InpAvgIntervalManual = 600;      // متوسط الفاصل اليدوي (لو فشل الاستخراج من الاسم)
 input double InpDueStart          = 1.05;     // بداية نافذة الدخول (× المتوسط)
 input double InpDueEnd            = 1.60;     // نهاية نافذة الدخول (× المتوسط)
@@ -95,6 +95,8 @@ double   g_pointValuePos = 0.0;       // قيمة النقطة بالدولار 
 double   g_slPoints      = 0.0;       // مسافة الستوب بالنقاط (من ستوب الدولار)
 double   g_tpPoints      = 0.0;       // مسافة الهدف بالنقاط (من هدف الدولار)
 double   g_avgTickPts    = 0.0;       // متوسط حركة التيك (نقاط)
+double   g_spikeAutoPts  = 0.0;       // عتبة السبايك التلقائية (نقاط) - مشتقة من التاريخ
+bool     g_crashOverdue  = false;     // هل كان الانهيار مستحقاً عند بدايته؟ (قفل لحظة البدء)
 double   g_recentPrices[64];          // حلقة آخر تيكات لكشف الانهيار الحي
 int      g_recentCnt    = 0;          // عدد الأسعار المخزنة حالياً
 
@@ -152,7 +154,12 @@ void SetFillingMode()
 //+------------------------------------------------------------------+
 bool IsSpikeDelta(const double delta)
   {
-   return (delta < 0.0 && MathAbs(delta) >= (double)InpSpikeMinPoints * _Point);
+   if(delta >= 0.0)
+      return false;
+   double thPts = (double)InpSpikeMinPoints;
+   if(thPts <= 0.0)
+      thPts = (g_spikeAutoPts > 0.0) ? g_spikeAutoPts : 30.0;
+   return (MathAbs(delta) >= thPts * _Point);
   }
 
 //+------------------------------------------------------------------+
@@ -167,20 +174,59 @@ void InitFromHistory()
       Print("PainX EA: تعذر جلب تيكات التاريخ، سيبدأ العداد من الصفر.");
       return;
      }
+   // المرحلة 1: متوسط حركة التيك + جمع التيكات الهابطة لاشتقاق عتبة السبايك تلقائياً
    double prev   = 0.0;
-   long   since  = 0;
    double sumAbs = 0.0;
    long   cnt    = 0;
+   double neg[];
+   int    negCnt = 0;
+   ArrayResize(neg, n);
    for(int i = 0; i < n; i++)
      {
       double p = arr[i].bid;
       if(prev > 0.0)
         {
-         sumAbs += MathAbs(p - prev);
+         double d = p - prev;
+         sumAbs += MathAbs(d);
          cnt++;
+         if(d < 0.0)
+           {
+            neg[negCnt] = d;
+            negCnt++;
+           }
+        }
+      prev = p;
+     }
+   if(cnt > 0)
+      g_avgTickPts = (sumAbs / (double)cnt) / _Point;
+
+   // العتبة التلقائية: أصغر تيك بين أعلى 0.5% من التيكات الهابطة (تيكات الانهيارات الحقيقية)
+   if(negCnt >= 200)
+     {
+      ArrayResize(neg, negCnt);
+      ArraySort(neg);
+      int k = (int)MathFloor(negCnt * 0.005);
+      if(k < 1)
+         k = 1;
+      double cand     = MathAbs(neg[k - 1]) / _Point;
+      double floorPts = 20.0;
+      if(g_avgTickPts > 0.0)
+         floorPts = MathMax(floorPts, 2.0 * g_avgTickPts);
+      g_spikeAutoPts = MathMax(cand, floorPts);
+     }
+
+   // المرحلة 2: بناء العداد بعتبة السبايك المشتقة + تسجيل حالة الاستحقاق عند كل انهيار
+   prev        = 0.0;
+   long  since = 0;
+   for(int i = 0; i < n; i++)
+     {
+      double p = arr[i].bid;
+      if(prev > 0.0)
+        {
          if(IsSpikeDelta(p - prev))
            {
-            since = 0;
+            g_crashOverdue  = (since >= (long)(g_avgInterval * InpOverdueMin));
+            since           = 0;
             g_lastSpikeTime = arr[i].time;
            }
          else
@@ -188,11 +234,10 @@ void InitFromHistory()
         }
       prev = p;
      }
-   if(cnt > 0)
-      g_avgTickPts = (sumAbs / (double)cnt) / _Point;
    g_prevPrice  = prev;
    g_ticksSince = since;
-   PrintFormat("PainX EA: تهيئة العداد من %d تيك | تيكات منذ آخر سبايك هابط = %I64d", n, g_ticksSince);
+   PrintFormat("PainX EA: تهيئة العداد من %d تيك | متوسط حركة التيك=%.1f نقطة | عتبة السبايك=%.0f نقطة | تيكات منذ آخر سبايك=%I64d",
+               n, g_avgTickPts, g_spikeAutoPts, g_ticksSince);
   }
 
 //+------------------------------------------------------------------+
@@ -248,6 +293,10 @@ bool OverdueEnough()
   {
    if(!InpRequireOverdue)
       return true;
+   // أثناء الانهيار الحي: نستخدم حالة "مستحق" المسجلة لحظة بداية الانهيار
+   // (لأن بداية الانهيار نفسها تصفّر العداد - إصلاح 3.02)
+   if(CrashActive())
+      return g_crashOverdue;
    return (g_ticksSince >= (long)(g_avgInterval * InpOverdueMin));
   }
 
@@ -359,6 +408,7 @@ void UpdateTickState()
      {
       if(IsSpikeDelta(price - g_prevPrice))
         {
+         g_crashOverdue  = (g_ticksSince >= (long)(g_avgInterval * InpOverdueMin));
          g_ticksSince    = 0;
          g_lastSpikeTime = t.time;
         }
@@ -543,6 +593,49 @@ void TryEnter()
   }
 
 //+------------------------------------------------------------------+
+//| سبب عدم الدخول الآن (للعرض في اللوحة)                             |
+//+------------------------------------------------------------------+
+string EntryBlockReason()
+  {
+   if(!TerminalAllowed())
+      return "التداول الآلي مقفل - فعّل زر AutoTrading";
+   if(g_halted)
+      return "موقوف اليوم: حد الخسارة اليومي";
+   if(InpMaxTradesPerDay > 0 && g_tradesToday >= InpMaxTradesPerDay)
+      return "اكتمل حد صفقات اليوم";
+   if(g_lastTradeTime > 0)
+     {
+      long rem = (long)InpMinSecondsBetween - (long)(TimeCurrent() - g_lastTradeTime);
+      if(rem > 0)
+         return "فاصل بين الصفقات: باقي " + IntegerToString((int)MathCeil(rem / 60.0)) + " دقيقة";
+     }
+   if(!LossCooldownOK())
+     {
+      long rem2 = (long)InpLossCooldownMin * 60 - (long)(TimeCurrent() - g_lastCloseTime);
+      if(rem2 > 0)
+         return "انتظار بعد خسارة: باقي " + IntegerToString((int)MathCeil(rem2 / 60.0)) + " دقيقة";
+     }
+   int b = 0, s = 0;
+   if(CountMyPositions(b, s) >= InpMaxPositions)
+      return "يوجد صفقة مفتوحة الآن";
+   if(InpEntryMode == ENTRY_CRASH_RIDE)
+     {
+      if(!CrashActive())
+         return "بانتظار انهيار حي (لا هبوط عنيف الآن)";
+      if(!OverdueEnough())
+         return "الانهيار مبكر - لم يكن مستحقاً عند بدايته";
+      return "إشارة دخول نشطة!";
+     }
+   if(!InDueWindow())
+     {
+      if(g_ticksSince < (long)(g_avgInterval * InpDueStart))
+         return "منطقة آمنة - سبايك حديث";
+      return "خارج النافذة - بانتظار الاستحقاق";
+     }
+   return "إشارة دخول نشطة!";
+  }
+
+//+------------------------------------------------------------------+
 //| لوحة المعلومات على الشارت                                        |
 //+------------------------------------------------------------------+
 void UpdatePanel()
@@ -566,7 +659,7 @@ void UpdatePanel()
       state = "منطقة متأخرة (سبايك متأخر)";
 
    string s = "";
-   s += "===== PainX Sell EA v3.0 (صيد الانهيار + حماية) =====\n";
+   s += "===== PainX Sell EA v3.02 (صيد الانهيار + حماية) =====\n";
    s += "الرمز: " + _Symbol + " | بيع فقط (إجباري)\n";
    s += "-----------------------------------------\n";
    s += "اللوت: " + DoubleToString(g_lot, 2) + "\n";
@@ -588,6 +681,10 @@ void UpdatePanel()
    s += "حماية الأرباح: " + ((prot == "") ? "معطلة" : prot) + "\n";
    if(g_avgTickPts > 0.0)
       s += "متوسط حركة التيك: " + DoubleToString(g_avgTickPts, 1) + " نقطة\n";
+   double shownTh = (InpSpikeMinPoints > 0) ? (double)InpSpikeMinPoints : g_spikeAutoPts;
+   if(shownTh > 0.0)
+      s += "عتبة السبايك: " + DoubleToString(shownTh, 0) + " نقطة" + ((InpSpikeMinPoints > 0) ? " (يدوي)" : " (تلقائي)") + "\n";
+   s += "سبب عدم الدخول الآن: " + EntryBlockReason() + "\n";
    s += "-----------------------------------------\n";
    s += "صفقات مفتوحة: " + IntegerToString(sellCnt) + " (بيع)\n";
    s += "صفقات اليوم: " + IntegerToString(g_tradesToday) + " / " + IntegerToString(InpMaxTradesPerDay) + "\n";
@@ -696,12 +793,12 @@ int OnInit()
    g_curDay     = dt.day_of_year;
    g_dayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-   PrintFormat("PainX EA v3.01 بدأ | الرمز=%s | بيع فقط | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | نمط الدخول=%s | حماية الأرباح=%s | فاصل=%d ثانية | انتظار بعد خسارة=%d دقيقة",
+   PrintFormat("PainX EA v3.02 بدأ | الرمز=%s | بيع فقط | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | نمط الدخول=%s | حماية الأرباح=%s | فاصل=%d ثانية | انتظار بعد خسارة=%d دقيقة",
                _Symbol, g_lot, InpStopLossUSD, InpTakeProfitUSD,
                (InpEntryMode == ENTRY_CRASH_RIDE ? "صيد الانهيار الحي" : "نافذة الاستحقاق"),
                ((InpUseBreakEven || InpUseTrailing) ? "مفعلة" : "معطلة"),
                InpMinSecondsBetween, InpLossCooldownMin);
-   Print("PainX EA v3.01: حل ضرب الستوبات - الدخول الآن أثناء الانهيار الفعلي فقط + قفل تعادل وتتبع يحمي الأرباح.");
+   Print("PainX EA v3.02: إصلاح منع فتح الصفقات - عتبة سبايك تلقائية من التاريخ + قفل الاستحقاق لحظة بداية الانهيار.");
    return(INIT_SUCCEEDED);
   }
 
