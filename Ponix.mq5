@@ -10,13 +10,13 @@
 //|   - هدف ربح 10 دولارات (خمسة أضعاف الخسارة)                      |
 //|   - لا خروج زمني: الصفقة تنتهي بالستوب أو الهدف فقط             |
 //|   - فترات طويلة (2.00): 30 دقيقة بين الصفقات + ساعة انتظار بعد أي خسارة
-//|   - جديد 3.02: إصلاح منع فتح الصفقات (عتبة سبايك تلقائية + قفل الاستحقاق أثناء الانهيار) + سبب عدم الدخول في اللوحة | 3.01: لوت 0.1 + قفل تعادل + تتبع أرباح     |
+//|   - جديد 3.03: ستوب متحرك - كل دولار ربح يحجز نصف دولار (50%) | 3.02: إصلاح منع فتح الصفقات (عتبة سبايك تلقائية + قفل الاستحقاق أثناء الانهيار) + سبب عدم الدخول في اللوحة | 3.01: لوت 0.1 + قفل تعادل + تتبع أرباح     |
 //|                                                                  |
 //|  ⚠ تحذير: المؤشرات الاصطناعية عالية المخاطر. جرّب على حساب       |
 //|     تجريبي أولاً ولا تخاطر بمال لا تتحمل خسارته.                 |
 //+------------------------------------------------------------------+
 #property copyright "PainX Sell EA"
-#property version   "3.02"
+#property version   "3.03"
 #property description "PainX: بيع فقط | صيد الانهيار الحي | خسارة 3$ | هدف 10$ | حماية أرباح"
 
 #include <Trade\Trade.mqh>
@@ -67,9 +67,9 @@ input group "====== حماية الأرباح (جديد 3.00) ======"
 input bool   InpUseBreakEven        = true;     // قفل التعادل
 input double InpBETriggerUSD        = 2.0;      // تفعيل القفل عند ربح (دولار)
 input int    InpBEBufferPoints      = 30;       // ربح مؤمن عند القفل (نقاط)
-input bool   InpUseTrailing         = true;     // تتبع الأرباح
-input double InpTrailStartUSD       = 3.0;      // بدء التتبع عند ربح (دولار)
-input double InpTrailDistUSD        = 1.5;      // مسافة التتبع خلف السعر (دولار)
+input bool   InpUseTrailing         = true;     // ستوب متحرك يحمي الأرباح
+input double InpLockStartUSD        = 1.0;      // بدء الحجز عند ربح (دولار)
+input double InpLockPct             = 50.0;     // نسبة الحجز من الربح % (50 = كل دولار يحجز نصفه)
 input double InpTrailStepUSD        = 0.2;      // أدنى تحسين لتحديث الستوب (دولار)
 
 //+------------------------------------------------------------------+
@@ -494,15 +494,15 @@ void ProtectProfit(const ulong ticket)
         }
      }
 
-   // التتبع: بعد ربح البدء، ثبّت الستوب فوق السعر بمسافة محددة بالدولار
-   if(InpUseTrailing && pl >= InpTrailStartUSD)
+   // الستوب المتحرك (3.03): كل دولار ربح يحجز نسبته (افتراضي 50% = نص دولار لكل دولار)
+   // يُحسب من الربح الحالي لكن الستوب لا يتراجع أبداً - فيقفل عملياً نسبة من أعلى ربح بلغته الصفقة
+   if(InpUseTrailing && pl >= InpLockStartUSD)
      {
-      double distPts = (g_pointValuePos > 0.0) ? (InpTrailDistUSD / g_pointValuePos) : 0.0;
-      if(distPts < minDist / _Point)
-         distPts = minDist / _Point;
-      if(distPts > 0.0)
+      double lockUSD = pl * InpLockPct / 100.0;
+      double lockPts = (g_pointValuePos > 0.0) ? (lockUSD / g_pointValuePos) : 0.0;
+      if(lockPts > 0.0)
         {
-         double trailSL = NormalizeDouble(ask + distPts * _Point, _Digits);
+         double trailSL = NormalizeDouble(open - lockPts * _Point, _Digits);
          if((trailSL - ask) >= minDist && (curSL == 0.0 || trailSL < curSL))
            {
             double stepPts = (g_pointValuePos > 0.0) ? (InpTrailStepUSD / g_pointValuePos) : 0.0;
@@ -659,7 +659,7 @@ void UpdatePanel()
       state = "منطقة متأخرة (سبايك متأخر)";
 
    string s = "";
-   s += "===== PainX Sell EA v3.02 (صيد الانهيار + حماية) =====\n";
+   s += "===== PainX Sell EA v3.03 (صيد الانهيار + حماية) =====\n";
    s += "الرمز: " + _Symbol + " | بيع فقط (إجباري)\n";
    s += "-----------------------------------------\n";
    s += "اللوت: " + DoubleToString(g_lot, 2) + "\n";
@@ -677,7 +677,7 @@ void UpdatePanel()
    if(InpUseBreakEven)
       prot += "قفل تعادل عند +" + DoubleToString(InpBETriggerUSD, 1) + "$ ";
    if(InpUseTrailing)
-      prot += "| تتبع من +" + DoubleToString(InpTrailStartUSD, 1) + "$";
+      prot += "| ستوب متحرك: يحجز " + DoubleToString(InpLockPct, 0) + "% من الربح من +" + DoubleToString(InpLockStartUSD, 1) + "$";
    s += "حماية الأرباح: " + ((prot == "") ? "معطلة" : prot) + "\n";
    if(g_avgTickPts > 0.0)
       s += "متوسط حركة التيك: " + DoubleToString(g_avgTickPts, 1) + " نقطة\n";
@@ -793,12 +793,12 @@ int OnInit()
    g_curDay     = dt.day_of_year;
    g_dayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-   PrintFormat("PainX EA v3.02 بدأ | الرمز=%s | بيع فقط | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | نمط الدخول=%s | حماية الأرباح=%s | فاصل=%d ثانية | انتظار بعد خسارة=%d دقيقة",
+   PrintFormat("PainX EA v3.03 بدأ | الرمز=%s | بيع فقط | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | نمط الدخول=%s | حماية الأرباح=%s | فاصل=%d ثانية | انتظار بعد خسارة=%d دقيقة",
                _Symbol, g_lot, InpStopLossUSD, InpTakeProfitUSD,
                (InpEntryMode == ENTRY_CRASH_RIDE ? "صيد الانهيار الحي" : "نافذة الاستحقاق"),
                ((InpUseBreakEven || InpUseTrailing) ? "مفعلة" : "معطلة"),
                InpMinSecondsBetween, InpLossCooldownMin);
-   Print("PainX EA v3.02: إصلاح منع فتح الصفقات - عتبة سبايك تلقائية من التاريخ + قفل الاستحقاق لحظة بداية الانهيار.");
+   Print("PainX EA v3.03: ستوب متحرك يبني كل دولار ربح يُحجز نصفه تلقائياً - الستوب لا يتراجع أبداً.");
    return(INIT_SUCCEEDED);
   }
 
