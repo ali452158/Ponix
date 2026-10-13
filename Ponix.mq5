@@ -9,15 +9,15 @@
 //|   - خسارة قصوى 3 دولار (ستوب دولاري)                            |
 //|   - هدف ربح 10 دولارات (خمسة أضعاف الخسارة)                      |
 //|   - لا خروج زمني: الصفقة تنتهي بالستوب أو الهدف فقط             |
-//|   - فترات طويلة (2.00): 30 دقيقة بين الصفقات + ساعة انتظار بعد أي خسارة
-//|   - جديد 3.05: إلغاء التوقف اليومي عند الخسارة - البوت يعمل مهما كانت الخسارة | 3.04: ستوب متحرك 75% | 3.03: حجز 50% | 3.02: إصلاح منع فتح الصفقات (عتبة سبايك تلقائية + قفل الاستحقاق أثناء الانهيار) + سبب عدم الدخول في اللوحة | 3.01: لوت 0.1 + قفل تعادل + تتبع أرباح     |
+//|   - جديد 3.06: إلغاء كل آليات التوقف بأمر المستخدم - بلا فاصل بين الصفقات، بلا حد صفقات يومي، بلا انتظار بعد الخسارة، بلا حد خسارة يومي - البوت يعمل دائماً مهما كانت الخسارة
+//|   - 3.05: إلغاء التوقف اليومي | 3.04: ستوب متحرك 75% | 3.03: حجز 50% | 3.02: عتبة سبايك تلقائية + قفل الاستحقاق | 3.01: لوت 0.1 + قفل تعادل + تتبع أرباح     |
 //|                                                                  |
 //|  ⚠ تحذير: المؤشرات الاصطناعية عالية المخاطر. جرّب على حساب       |
 //|     تجريبي أولاً ولا تخاطر بمال لا تتحمل خسارته.                 |
 //+------------------------------------------------------------------+
 #property copyright "PainX Sell EA"
-#property version   "3.05"
-#property description "PainX: بيع فقط | صيد الانهيار الحي | خسارة 3$ | هدف 10$ | حماية أرباح"
+#property version   "3.06"
+#property description "PainX: بيع فقط | صيد الانهيار الحي | خسارة 3$ | هدف 10$ | حماية أرباح | بلا أي توقف"
 
 #include <Trade\Trade.mqh>
 
@@ -38,9 +38,9 @@ input long   InpMagic             = 990012;   // الماجيك نمبر
 input int    InpSlippagePoints    = 100;      // أقصى انزلاق (نقاط)
 input int    InpMaxSpreadPoints   = 0;        // أقصى سبريد (0 = معطل)
 input int    InpMaxPositions      = 1;        // أقصى صفقات مفتوحة
-input int    InpMinSecondsBetween = 1800;      // ثواني بين صفقة وأخرى
-input int    InpMaxTradesPerDay   = 5;       // أقصى صفقات يومياً (0 = بلا حد)
-input int    InpLossCooldownMin   = 60;       // انتظار إضافي بعد صفقة خاسرة (دقائق، 0 = معطل)
+input int    InpMinSecondsBetween = 0;        // ثواني بين صفقة وأخرى (0 = بلا فاصل - ألغيها المستخدم)
+input int    InpMaxTradesPerDay   = 0;       // أقصى صفقات يومياً (0 = بلا حد - ألغيها المستخدم)
+input int    InpLossCooldownMin   = 0;       // انتظار بعد صفقة خاسرة (0 = معطل - البوت لا يتوقف حتى لو خسر)
 input bool   InpShowPanel         = true;     // إظهار لوحة المعلومات
 
 input group "====== المخاطر (بالدولار) ======"
@@ -575,7 +575,7 @@ void TryEnter()
       return;
    if(InpMaxTradesPerDay > 0 && g_tradesToday >= InpMaxTradesPerDay)
       return;
-   if(g_lastTradeTime > 0 && (TimeCurrent() - g_lastTradeTime) < InpMinSecondsBetween)
+   if(InpMinSecondsBetween > 0 && g_lastTradeTime > 0 && (TimeCurrent() - g_lastTradeTime) < InpMinSecondsBetween)
       return;
    if(!LossCooldownOK())
       return;
@@ -659,7 +659,7 @@ void UpdatePanel()
       state = "منطقة متأخرة (سبايك متأخر)";
 
    string s = "";
-   s += "===== PainX Sell EA v3.05 (صيد الانهيار + حماية) =====\n";
+   s += "===== PainX Sell EA v3.06 (صيد الانهيار + حماية) =====\n";
    s += "الرمز: " + _Symbol + " | بيع فقط (إجباري)\n";
    s += "-----------------------------------------\n";
    s += "اللوت: " + DoubleToString(g_lot, 2) + "\n";
@@ -687,8 +687,9 @@ void UpdatePanel()
    s += "سبب عدم الدخول الآن: " + EntryBlockReason() + "\n";
    s += "-----------------------------------------\n";
    s += "صفقات مفتوحة: " + IntegerToString(sellCnt) + " (بيع)\n";
-   s += "صفقات اليوم: " + IntegerToString(g_tradesToday) + " / " + IntegerToString(InpMaxTradesPerDay) + "\n";
-   s += "الفاصل بين الصفقات: " + IntegerToString(InpMinSecondsBetween / 60) + " دقيقة\n";
+   s += "صفقات اليوم: " + IntegerToString(g_tradesToday) + ((InpMaxTradesPerDay > 0) ? (" / " + IntegerToString(InpMaxTradesPerDay)) : " (بلا حد)") + "\n";
+   s += "الفاصل بين الصفقات: " + ((InpMinSecondsBetween > 0) ? (IntegerToString(InpMinSecondsBetween / 60) + " دقيقة") : "معطل") + "\n";
+   s += "التوقف بعد الخسارة: " + ((InpLossCooldownMin > 0) ? (IntegerToString(InpLossCooldownMin) + " دقيقة") : "معطل - البوت يعمل دائماً") + "\n";
    if(!LossCooldownOK())
      {
       long remSec = (long)InpLossCooldownMin * 60 - (long)(TimeCurrent() - g_lastCloseTime);
@@ -793,12 +794,12 @@ int OnInit()
    g_curDay     = dt.day_of_year;
    g_dayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-   PrintFormat("PainX EA v3.05 بدأ | الرمز=%s | بيع فقط | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | نمط الدخول=%s | حماية الأرباح=%s | فاصل=%d ثانية | انتظار بعد خسارة=%d دقيقة",
+   PrintFormat("PainX EA v3.06 بدأ | الرمز=%s | بيع فقط | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | نمط الدخول=%s | حماية الأرباح=%s | فاصل=%d ثانية | انتظار بعد خسارة=%d دقيقة",
                _Symbol, g_lot, InpStopLossUSD, InpTakeProfitUSD,
                (InpEntryMode == ENTRY_CRASH_RIDE ? "صيد الانهيار الحي" : "نافذة الاستحقاق"),
                ((InpUseBreakEven || InpUseTrailing) ? "مفعلة" : "معطلة"),
                InpMinSecondsBetween, InpLossCooldownMin);
-   Print("PainX EA v3.05: البوت لا يتوقف عند الخسارة (حماية يومية معطلة) + ستوب متحرك يحجز 75% من الربح أول بأول.");
+   Print("PainX EA v3.06: كل آليات التوقف ملغاة - بلا فاصل بين الصفقات، بلا حد صفقات يومي، بلا انتظار بعد الخسارة، بلا حد خسارة يومي. البوت يعمل دائماً مهما كانت الخسارة + ستوب متحرك يحجز 75% من الربح أول بأول.");
    if(InpMaxDailyLossPct <= 0.0)
       Print("PainX EA: حد الخسارة اليومي معطل بأمر المستخدم - البوت يستمر بالتداول مهما كانت الخسارة.");
    return(INIT_SUCCEEDED);
