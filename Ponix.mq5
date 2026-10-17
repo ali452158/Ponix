@@ -10,6 +10,7 @@
 //|   - هدف ربح 10 دولارات (خمسة أضعاف الخسارة)                      |
 //|   - لا خروج زمني: الصفقة تنتهي بالستوب أو الهدف فقط             |
 //|   - جديد 3.07: شراء بعد البيع - بعد إغلاق أي صفقة بيع يفتح شراء لالتقاط الارتداد: خروج بعد 10 شمعات فريم الدقيقة، ستوب 3$، حماية أرباح تعمل على الشراء
+//|   - جديد 3.08: سرعة الالتقاط القصوى - دخول فوري على أول تيك هبوط عنيف بدون انتظار + نافذة كشف أسرع (12 تيك × 4) + إلغاء شرط الاستحقاق المانع + بيع جديد حتى لو الشراء مفتوح
 //|   - جديد 3.06: إلغاء كل آليات التوقف بأمر المستخدم - بلا فاصل بين الصفقات، بلا حد صفقات يومي، بلا انتظار بعد الخسارة، بلا حد خسارة يومي - البوت يعمل دائماً مهما كانت الخسارة
 //|   - 3.05: إلغاء التوقف اليومي | 3.04: ستوب متحرك 75% | 3.03: حجز 50% | 3.02: عتبة سبايك تلقائية + قفل الاستحقاق | 3.01: لوت 0.1 + قفل تعادل + تتبع أرباح     |
 //|                                                                  |
@@ -17,8 +18,8 @@
 //|     تجريبي أولاً ولا تخاطر بمال لا تتحمل خسارته.                 |
 //+------------------------------------------------------------------+
 #property copyright "PainX Sell EA"
-#property version   "3.07"
-#property description "PainX: بيع أساسي + شراء بعد البيع | صيد الانهيار الحي | خسارة 3$ | هدف 10$ | حماية أرباح"
+#property version   "3.08"
+#property description "PainX: بيع أساسي + شراء بعد البيع | دخول فوري على أول تيك هبوط عنيف | خسارة 3$ | هدف 10$ | حماية أرباح"
 
 #include <Trade\Trade.mqh>
 
@@ -57,18 +58,20 @@ input double InpDueStart          = 1.05;     // بداية نافذة الدخ�
 input double InpDueEnd            = 1.60;     // نهاية نافذة الدخول (× المتوسط)
 input int    InpInitTicksHistory  = 80000;    // تيكات التاريخ لتهيئة العداد
 
-input group "====== نمط الدخول (جديد 3.00) ======"
+input group "====== نمط الدخول (سرعة 3.08) ======"
 input ENUM_CRASH_MODE InpEntryMode  = ENTRY_CRASH_RIDE; // نمط الدخول
-input int    InpCrashLookback       = 20;       // تيكات كشف الانهيار الحي
-input double InpCrashMult           = 10.0;     // قوة الانهيار (× متوسط حركة التيك)
-input bool   InpRequireOverdue      = true;     // اشتراط تأخر الانهيار عن دورته
-input double InpOverdueMin          = 0.80;     // أدنى تأخر (× المتوسط)
+input bool   InpInstantSpikeEntry   = true;     // (3.08) دخول فوري على أول تيك هبوط عنيف - أسرع التقاط ممكن
+input int    InpCrashLookback       = 12;       // تيكات كشف الانهيار الحي (كانت 20 - أسرع الآن)
+input double InpCrashMult           = 4.0;      // قوة الانهيار × متوسط حركة التيك (كانت 10 - أدق التقاط)
+input bool   InpRequireOverdue      = false;    // اشتراط تأخر الانهيار عن دورته (عُطّل: كان يمنع صفقات كثيرة)
+input double InpOverdueMin          = 0.50;     // أدنى تأخر × المتوسط (لو فُعّل الشرط أعلاه)
 
 input group "====== الشراء بعد البيع (جديد 3.07) ======"
 input bool   InpUseBuyAfterSell   = true;     // تفعيل الشراء بعد إغلاق البيع
 input int    InpBuyCandlesM1      = 10;       // خروج الشراء بعد كم شمعة فريم الدقيقة
 input double InpBuyStopUSD        = 3.0;      // ستوب الشراء بالدولار
 input double InpBuyTakeProfitUSD  = 0.0;      // هدف الشراء بالدولار (0 = معطل - الخروج بالشمعات)
+input bool   InpSellWhileBuy      = true;     // (3.08) بيع جديد حتى لو الشراء مفتوح - لا تضيع أي هبطة
 
 input group "====== حماية الأرباح (جديد 3.00) ======"
 input bool   InpUseBreakEven        = true;     // قفل التعادل
@@ -92,6 +95,7 @@ datetime g_lastPanelTime = 0;
 datetime g_lastCloseTime   = 0;      // وقت إغلاق آخر صفقة
 double   g_lastCloseProfit = 0.0;    // نتيجة آخر صفقة مغلقة (لانتظار ما بعد الخسارة)
 bool     g_buyPending      = false;  // (3.07) جاهز لفتح شراء بعد إغلاق صفقة بيع
+bool     g_lastTickSpike   = false;  // (3.08) هل تيك الأخير هبوط عنيف؟ (مفتاح الدخول الفوري)
 datetime g_buyEntryBar     = 0;      // (3.07) وقت شمعة الدقيقة عند فتح الشراء
 double   g_buySlPoints     = 0.0;    // (3.07) مسافة ستوب الشراء بالنقاط
 double   g_buyTpPoints     = 0.0;    // (3.07) مسافة هدف الشراء بالنقاط (0 = معطل)
@@ -317,7 +321,12 @@ bool OverdueEnough()
 bool EntrySignal()
   {
    if(InpEntryMode == ENTRY_CRASH_RIDE)
+     {
+      // (3.08) الدخول الفوري: أول تيك هبوط عنيف = إشارة الآن (بدون انتظار تكامل النافذة)
+      if(InpInstantSpikeEntry && g_lastTickSpike)
+         return true;
       return (CrashActive() && OverdueEnough());
+     }
    return InDueWindow();
   }
 
@@ -415,13 +424,18 @@ void UpdateTickState()
    if(!SymbolInfoTick(_Symbol, t))
       return;
    double price = t.bid;
+   g_lastTickSpike = false;
    if(g_prevPrice > 0.0)
      {
       if(IsSpikeDelta(price - g_prevPrice))
         {
-         g_crashOverdue  = (g_ticksSince >= (long)(g_avgInterval * InpOverdueMin));
+         // (3.08) إصلاح حرج: أثناء الانهيار الحي لا نعيد قفل حالة الاستحقاق
+         // (كانت تنقلب إلى "غير مستحق" عند كل تيك عنيف فيمنع الدخول في منتصف الصيد)
+         if(!CrashActive())
+            g_crashOverdue = (g_ticksSince >= (long)(g_avgInterval * InpOverdueMin));
          g_ticksSince    = 0;
          g_lastSpikeTime = t.time;
+         g_lastTickSpike = true;
         }
       else
          g_ticksSince++;
@@ -692,14 +706,17 @@ void TryEnter()
       return;
 
    int buyCnt = 0, sellCnt = 0;
-   if(CountMyPositions(buyCnt, sellCnt) >= InpMaxPositions)
-      return;
+   CountMyPositions(buyCnt, sellCnt);
 
    // (3.07) الشراء بعد البيع: أولوية فورية بعد إغلاق أي صفقة بيع
    if(g_buyPending)
      {
+      if(buyCnt >= InpMaxPositions)
+         return;
       OpenBuy();
-      return;
+      if(!InpSellWhileBuy)
+         return;
+      // (3.08) بعد فتح الشراء نكمل فحص إشارة البيع في نفس التيك - لا نفوّت هبطة مستمرة
      }
 
    if(InpMaxTradesPerDay > 0 && g_tradesToday >= InpMaxTradesPerDay)
@@ -708,7 +725,11 @@ void TryEnter()
       return;
    if(!LossCooldownOK())
       return;
-   if(sellCnt > 0)
+
+   // (3.08) بيع واحد مفتوح كحد أقصى - والشراء المفتوح لا يمنع بيعاً جديداً (إلا لو عُطّل InpSellWhileBuy)
+   if(sellCnt >= InpMaxPositions)
+      return;
+   if(buyCnt > 0 && !InpSellWhileBuy)
       return;
 
    if(!EntrySignal())
@@ -741,14 +762,19 @@ string EntryBlockReason()
          return "انتظار بعد خسارة: باقي " + IntegerToString((int)MathCeil(rem2 / 60.0)) + " دقيقة";
      }
    int b = 0, s = 0;
-   if(CountMyPositions(b, s) >= InpMaxPositions)
-      return (b > 0) ? "صفقة شراء مفتوحة - تخرج بعد شمعات الدقيقة أو التتبع" : "يوجد صفقة بيع مفتوحة الآن";
+   CountMyPositions(b, s);
+   if(s >= InpMaxPositions)
+      return "يوجد صفقة بيع مفتوحة الآن";
+   if(b >= InpMaxPositions && !InpSellWhileBuy)
+      return "صفقة شراء مفتوحة - تخرج بعد شمعات الدقيقة أو التتبع";
    if(g_buyPending)
       return "بانتظار فتح الشراء بعد إغلاق البيع";
    if(InpEntryMode == ENTRY_CRASH_RIDE)
      {
+      if(g_lastTickSpike)
+         return "تيك هبوط عنيف الآن - دخول فوري!";
       if(!CrashActive())
-         return "بانتظار انهيار حي (لا هبوط عنيف الآن)";
+         return "بانتظار أول تيك هبوط عنيف (الدخول عنده فوري)";
       if(!OverdueEnough())
          return "الانهيار مبكر - لم يكن مستحقاً عند بدايته";
       return "إشارة دخول نشطة!";
@@ -786,7 +812,7 @@ void UpdatePanel()
       state = "منطقة متأخرة (سبايك متأخر)";
 
    string s = "";
-   s += "===== PainX EA v3.07 (صيد الانهيار + شراء الارتداد) =====\n";
+   s += "===== PainX EA v3.08 (صيد فوري + شراء الارتداد) =====\n";
    s += "الرمز: " + _Symbol + " | بيع أساسي + شراء بعد البيع\n";
    s += "-----------------------------------------\n";
    s += "اللوت: " + DoubleToString(g_lot, 2) + "\n";
@@ -800,6 +826,8 @@ void UpdatePanel()
    s += "الحالة: " + state + "\n";
    string modeStr = (InpEntryMode == ENTRY_CRASH_RIDE) ? "صيد الانهيار الحي" : "نافذة الاستحقاق";
    s += "نمط الدخول: " + modeStr + "\n";
+   s += "سرعة الالتقاط: " + ((InpInstantSpikeEntry) ? "دخول فوري على أول تيك هبوط عنيف" : "انتظار اكتمال نافذة الانهيار") + "\n";
+   s += "البيع أثناء الشراء المفتوح: " + ((InpSellWhileBuy) ? "مسموح - لا هبطة تضيع" : "معطل") + "\n";
    string prot = "";
    if(InpUseBreakEven)
       prot += "قفل تعادل عند +" + DoubleToString(InpBETriggerUSD, 1) + "$ ";
@@ -920,6 +948,9 @@ int OnInit()
    InitFromHistory();
    if(InpEntryMode == ENTRY_CRASH_RIDE && g_avgTickPts <= 0.0)
       Print("PainX EA: تنبيه - متوسط حركة التيك غير متاح، كشف الانهيار سيستخدم عتبة افتراضية 50 نقطة.");
+   if(InpEntryMode == ENTRY_CRASH_RIDE && g_avgTickPts > 0.0)
+      PrintFormat("PainX EA (3.08): عتبة التيك العنيف الفوري = %.0f نقطة | نافذة الكشف = %d تيك بحد أدنى %.0f نقطة - أي هبوط يتجاوزها يدخل فوراً.",
+                  g_spikeAutoPts, InpCrashLookback, InpCrashMult * g_avgTickPts);
 
    // 6) تحذير ذكي لو مسافة الستوب أضيق من تقلب الرمز
    if(g_avgTickPts > 0.0 && g_slPoints > 0.0 && g_slPoints < 20.0 * g_avgTickPts)
@@ -941,14 +972,15 @@ int OnInit()
    g_curDay     = dt.day_of_year;
    g_dayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-   PrintFormat("PainX EA v3.07 بدأ | الرمز=%s | بيع أساسي + شراء بعد البيع | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | نمط الدخول=%s | حماية الأرباح=%s | فاصل=%d ثانية | انتظار بعد خسارة=%d دقيقة",
+   PrintFormat("PainX EA v3.08 بدأ | الرمز=%s | بيع أساسي + شراء بعد البيع | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | نمط الدخول=%s | دخول فوري=%s | بيع أثناء الشراء=%s | حماية الأرباح=%s",
                _Symbol, g_lot, InpStopLossUSD, InpTakeProfitUSD,
                (InpEntryMode == ENTRY_CRASH_RIDE ? "صيد الانهيار الحي" : "نافذة الاستحقاق"),
-               ((InpUseBreakEven || InpUseTrailing) ? "مفعلة" : "معطلة"),
-               InpMinSecondsBetween, InpLossCooldownMin);
-   Print("PainX EA v3.07: كل آليات التوقف ملغاة - بلا فاصل بين الصفقات، بلا حد صفقات يومي، بلا انتظار بعد الخسارة، بلا حد خسارة يومي. البوت يعمل دائماً مهما كانت الخسارة + ستوب متحرك يحجز 75% من الربح أول بأول.");
+               (InpInstantSpikeEntry ? "مفعل - أول تيك عنيف يدخل فوراً" : "بانتظار النافذة"),
+               (InpSellWhileBuy ? "مسموح" : "معطل"),
+               ((InpUseBreakEven || InpUseTrailing) ? "مفعلة" : "معطلة"));
+   Print("PainX EA v3.08: سرعة الالتقاط القصوى - الدخول على أول تيك هبوط عنيف + نافذة كشف أسرع (12 تيك × 4) + إلغاء شرط الاستحقاق المانع + بيع جديد حتى لو الشراء مفتوح. كل آليات التوقف ما زالت ملغاة.");
    if(InpUseBuyAfterSell)
-      PrintFormat("PainX EA v3.07: الشراء بعد البيع مفعّل - بعد إغلاق أي بيع يفتح شراء يخرج بعد %d شمعة دقيقة | ستوب الشراء=%.2f$ | حماية الأرباح (قفل تعادل + تتبع 75%) تعمل على الشراء أيضاً.", InpBuyCandlesM1, InpBuyStopUSD);
+      PrintFormat("PainX EA v3.08: الشراء بعد البيع مفعّل - بعد إغلاق أي بيع يفتح شراء يخرج بعد %d شمعة دقيقة | ستوب الشراء=%.2f$ | حماية الأرباح (قفل تعادل + تتبع 75%) تعمل على الشراء أيضاً.", InpBuyCandlesM1, InpBuyStopUSD);
    if(InpMaxDailyLossPct <= 0.0)
       Print("PainX EA: حد الخسارة اليومي معطل بأمر المستخدم - البوت يستمر بالتداول مهما كانت الخسارة.");
    return(INIT_SUCCEEDED);
@@ -1024,8 +1056,16 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    long dtype = HistoryDealGetInteger(trans.deal, DEAL_TYPE);
    if(dtype == DEAL_TYPE_BUY && InpUseBuyAfterSell)
      {
-      g_buyPending = true;
-      PrintFormat("PainX EA: أُغلقت صفقة بيع - فتح شراء الارتداد في التيك القادم (خروج بعد %d شمعة دقيقة، ستوب %.2f$).", InpBuyCandlesM1, InpBuyStopUSD);
+      // (3.08) شراء واحد فقط في نفس اللحظة - لو الشراء مفتوح لا نتراكم طلبات
+      int b = 0, s = 0;
+      CountMyPositions(b, s);
+      if(b == 0)
+        {
+         g_buyPending = true;
+         PrintFormat("PainX EA: أُغلقت صفقة بيع - فتح شراء الارتداد في التيك القادم (خروج بعد %d شمعة دقيقة، ستوب %.2f$).", InpBuyCandlesM1, InpBuyStopUSD);
+        }
+      else
+         Print("PainX EA: أُغلقت صفقة بيع والشراء لا يزال مفتوحاً - لن يُفتح شراء إضافي.");
      }
 
    PrintFormat("PainX EA: تم إغلاق صفقة %s | السبب: %s | النتيجة: %.2f %s",
