@@ -4,11 +4,12 @@
 //|                                                                  |
 //|  المواصفات (حسب الطلب):                                          |
 //|   - يعمل على PainX فقط (يرفض أي رمز آخر)                        |
-//|   - بيع فقط - لا شراء أبداً (إجباري)                                     |
+//|   - بيع أساسي إجباري + شراء بعد البيع (3.07) يخرج بعد 10 شمعات دقيقة                                     |
 //|   - لوت ثابت 0.1 (الحد الأدنى للمنصة)                                               |
 //|   - خسارة قصوى 3 دولار (ستوب دولاري)                            |
 //|   - هدف ربح 10 دولارات (خمسة أضعاف الخسارة)                      |
 //|   - لا خروج زمني: الصفقة تنتهي بالستوب أو الهدف فقط             |
+//|   - جديد 3.07: شراء بعد البيع - بعد إغلاق أي صفقة بيع يفتح شراء لالتقاط الارتداد: خروج بعد 10 شمعات فريم الدقيقة، ستوب 3$، حماية أرباح تعمل على الشراء
 //|   - جديد 3.06: إلغاء كل آليات التوقف بأمر المستخدم - بلا فاصل بين الصفقات، بلا حد صفقات يومي، بلا انتظار بعد الخسارة، بلا حد خسارة يومي - البوت يعمل دائماً مهما كانت الخسارة
 //|   - 3.05: إلغاء التوقف اليومي | 3.04: ستوب متحرك 75% | 3.03: حجز 50% | 3.02: عتبة سبايك تلقائية + قفل الاستحقاق | 3.01: لوت 0.1 + قفل تعادل + تتبع أرباح     |
 //|                                                                  |
@@ -16,8 +17,8 @@
 //|     تجريبي أولاً ولا تخاطر بمال لا تتحمل خسارته.                 |
 //+------------------------------------------------------------------+
 #property copyright "PainX Sell EA"
-#property version   "3.06"
-#property description "PainX: بيع فقط | صيد الانهيار الحي | خسارة 3$ | هدف 10$ | حماية أرباح | بلا أي توقف"
+#property version   "3.07"
+#property description "PainX: بيع أساسي + شراء بعد البيع | صيد الانهيار الحي | خسارة 3$ | هدف 10$ | حماية أرباح"
 
 #include <Trade\Trade.mqh>
 
@@ -63,6 +64,12 @@ input double InpCrashMult           = 10.0;     // قوة الانهيار (× �
 input bool   InpRequireOverdue      = true;     // اشتراط تأخر الانهيار عن دورته
 input double InpOverdueMin          = 0.80;     // أدنى تأخر (× المتوسط)
 
+input group "====== الشراء بعد البيع (جديد 3.07) ======"
+input bool   InpUseBuyAfterSell   = true;     // تفعيل الشراء بعد إغلاق البيع
+input int    InpBuyCandlesM1      = 10;       // خروج الشراء بعد كم شمعة فريم الدقيقة
+input double InpBuyStopUSD        = 3.0;      // ستوب الشراء بالدولار
+input double InpBuyTakeProfitUSD  = 0.0;      // هدف الشراء بالدولار (0 = معطل - الخروج بالشمعات)
+
 input group "====== حماية الأرباح (جديد 3.00) ======"
 input bool   InpUseBreakEven        = true;     // قفل التعادل
 input double InpBETriggerUSD        = 2.0;      // تفعيل القفل عند ربح (دولار)
@@ -84,6 +91,10 @@ datetime g_lastTradeTime = 0;
 datetime g_lastPanelTime = 0;
 datetime g_lastCloseTime   = 0;      // وقت إغلاق آخر صفقة
 double   g_lastCloseProfit = 0.0;    // نتيجة آخر صفقة مغلقة (لانتظار ما بعد الخسارة)
+bool     g_buyPending      = false;  // (3.07) جاهز لفتح شراء بعد إغلاق صفقة بيع
+datetime g_buyEntryBar     = 0;      // (3.07) وقت شمعة الدقيقة عند فتح الشراء
+double   g_buySlPoints     = 0.0;    // (3.07) مسافة ستوب الشراء بالنقاط
+double   g_buyTpPoints     = 0.0;    // (3.07) مسافة هدف الشراء بالنقاط (0 = معطل)
 
 int      g_curDay        = -1;
 double   g_dayBalance    = 0.0;
@@ -434,22 +445,46 @@ void ManagePositions()
       if(PositionGetInteger(POSITION_MAGIC) != InpMagic)
          continue;
 
-      double pl = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      bool   isBuy = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+      double pl    = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
 
-      // ستوب الدولار: إغلاق فوري عند بلوغ الخسارة القصوى
-      if(InpStopLossUSD > 0.0 && pl <= -InpStopLossUSD)
+      // استرجاع وقت شمعة دخول الشراء بعد إعادة تشغيل الإكسبيرت
+      if(isBuy && g_buyEntryBar == 0)
         {
-         PrintFormat("PainX EA: ستوب الدولار - إغلاق الصفقة #%I64u | الخسارة=%.2f", tk, pl);
+         int shift = iBarShift(_Symbol, PERIOD_M1, (datetime)PositionGetInteger(POSITION_TIME));
+         if(shift >= 0)
+            g_buyEntryBar = iTime(_Symbol, PERIOD_M1, shift);
+        }
+
+      // ستوب الدولار: إغلاق فوري عند بلوغ الخسارة القصوى (بيع 3$ / شراء 3$)
+      double stopUSD = isBuy ? InpBuyStopUSD : InpStopLossUSD;
+      if(stopUSD > 0.0 && pl <= -stopUSD)
+        {
+         PrintFormat("PainX EA: ستوب الدولار (%s) - إغلاق الصفقة #%I64u | الخسارة=%.2f", (isBuy ? "شراء" : "بيع"), tk, pl);
          g_trade.PositionClose(tk, (ulong)InpSlippagePoints);
          continue;
         }
 
-      // هدف الدولار: إغلاق فوري عند بلوغ الربح المستهدف (خمسة أضعاف)
-      if(InpTakeProfitUSD > 0.0 && pl >= InpTakeProfitUSD)
+      // هدف الدولار: إغلاق فوري عند بلوغ الربح المستهدف (الشراء: 0 = معطل)
+      double tpUSD = isBuy ? InpBuyTakeProfitUSD : InpTakeProfitUSD;
+      if(tpUSD > 0.0 && pl >= tpUSD)
         {
-         PrintFormat("PainX EA: تحقق هدف الدولار - إغلاق الصفقة #%I64u | الربح=%.2f", tk, pl);
+         PrintFormat("PainX EA: تحقق هدف الدولار (%s) - إغلاق الصفقة #%I64u | الربح=%.2f", (isBuy ? "شراء" : "بيع"), tk, pl);
          g_trade.PositionClose(tk, (ulong)InpSlippagePoints);
          continue;
+        }
+
+      // (3.07) خروج الشراء بعد عدد شمعات فريم الدقيقة
+      if(isBuy && InpBuyCandlesM1 > 0 && g_buyEntryBar > 0)
+        {
+         datetime curBar = iTime(_Symbol, PERIOD_M1, 0);
+         int barsElapsed = (int)((curBar - g_buyEntryBar) / 60);
+         if(barsElapsed >= InpBuyCandlesM1)
+           {
+            PrintFormat("PainX EA: اكتملت %d شمعة دقيقة - إغلاق الشراء #%I64u | النتيجة=%.2f", InpBuyCandlesM1, tk, pl);
+            g_trade.PositionClose(tk, (ulong)InpSlippagePoints);
+            continue;
+           }
         }
 
       // حماية الأرباح: قفل التعادل + التتبع (الجديد في 3.00)
@@ -458,7 +493,7 @@ void ManagePositions()
   }
 
 //+------------------------------------------------------------------+
-//| حماية الأرباح: قفل تعادل + تتبع ستوب (مبني للبيع فقط)            |
+//| حماية الأرباح: قفل تعادل + تتبع ستوب (للبيع والشراء)             |
 //+------------------------------------------------------------------+
 void ProtectProfit(const ulong ticket)
   {
@@ -471,10 +506,12 @@ void ProtectProfit(const ulong ticket)
    double curSL = PositionGetDouble(POSITION_SL);
    double curTP = PositionGetDouble(POSITION_TP);
    double pl    = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+   bool   isBuy = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
 
    MqlTick t;
    if(!SymbolInfoTick(_Symbol, t))
       return;
+   double bid = t.bid;
    double ask = t.ask;
 
    long   stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
@@ -483,35 +520,74 @@ void ProtectProfit(const ulong ticket)
    double newSL  = 0.0;
    bool   hasNew = false;
 
-   // قفل التعادل: عند الربح المحدد، انقل الستوب تحت سعر الدخول (ربح مؤمن)
-   if(InpUseBreakEven && pl >= InpBETriggerUSD)
+   if(isBuy)
      {
-      double beSL = NormalizeDouble(open - InpBEBufferPoints * _Point, _Digits);
-      if((beSL - ask) >= minDist && (curSL == 0.0 || beSL < curSL))
+      // قفل التعادل للشراء: الستوب ينتقل فوق سعر الدخول (ربح مؤمن)
+      if(InpUseBreakEven && pl >= InpBETriggerUSD)
         {
-         newSL  = beSL;
-         hasNew = true;
+         double beSL = NormalizeDouble(open + InpBEBufferPoints * _Point, _Digits);
+         if((bid - beSL) >= minDist && (curSL == 0.0 || beSL > curSL))
+           {
+            newSL  = beSL;
+            hasNew = true;
+           }
+        }
+
+      // الستوب المتحرك للشراء (3.07): يحجز 75% من الربح - الستوب يصعد مع السعر ولا يتراجع أبداً
+      if(InpUseTrailing && pl >= InpLockStartUSD)
+        {
+         double lockUSD = pl * InpLockPct / 100.0;
+         double lockPts = (g_pointValuePos > 0.0) ? (lockUSD / g_pointValuePos) : 0.0;
+         if(lockPts > 0.0)
+           {
+            double trailSL = NormalizeDouble(open + lockPts * _Point, _Digits);
+            if((bid - trailSL) >= minDist && (curSL == 0.0 || trailSL > curSL))
+              {
+               double stepPts = (g_pointValuePos > 0.0) ? (InpTrailStepUSD / g_pointValuePos) : 0.0;
+               if(curSL == 0.0 || (trailSL - curSL) >= stepPts * _Point)
+                 {
+                  if(!hasNew || trailSL > newSL)
+                    {
+                     newSL  = trailSL;
+                     hasNew = true;
+                    }
+                 }
+              }
+           }
         }
      }
-
-   // الستوب المتحرك (3.04): يحجز 75% من الربح لحظياً - كل دولار ربح يثبت 75 سنت منه
-   // يُحسب من الربح الحالي لكن الستوب لا يتراجع أبداً - فيقفل عملياً 75% من أعلى ربح بلغته الصفقة
-   if(InpUseTrailing && pl >= InpLockStartUSD)
+   else
      {
-      double lockUSD = pl * InpLockPct / 100.0;
-      double lockPts = (g_pointValuePos > 0.0) ? (lockUSD / g_pointValuePos) : 0.0;
-      if(lockPts > 0.0)
+      // قفل التعادل: عند الربح المحدد، انقل الستوب تحت سعر الدخول (ربح مؤمن)
+      if(InpUseBreakEven && pl >= InpBETriggerUSD)
         {
-         double trailSL = NormalizeDouble(open - lockPts * _Point, _Digits);
-         if((trailSL - ask) >= minDist && (curSL == 0.0 || trailSL < curSL))
+         double beSL = NormalizeDouble(open - InpBEBufferPoints * _Point, _Digits);
+         if((beSL - ask) >= minDist && (curSL == 0.0 || beSL < curSL))
            {
-            double stepPts = (g_pointValuePos > 0.0) ? (InpTrailStepUSD / g_pointValuePos) : 0.0;
-            if(curSL == 0.0 || (curSL - trailSL) >= stepPts * _Point)
+            newSL  = beSL;
+            hasNew = true;
+           }
+        }
+
+      // الستوب المتحرك (3.04): يحجز 75% من الربح لحظياً - كل دولار ربح يثبت 75 سنت منه
+      // يُحسب من الربح الحالي لكن الستوب لا يتراجع أبداً - فيقفل عملياً 75% من أعلى ربح بلغته الصفقة
+      if(InpUseTrailing && pl >= InpLockStartUSD)
+        {
+         double lockUSD = pl * InpLockPct / 100.0;
+         double lockPts = (g_pointValuePos > 0.0) ? (lockUSD / g_pointValuePos) : 0.0;
+         if(lockPts > 0.0)
+           {
+            double trailSL = NormalizeDouble(open - lockPts * _Point, _Digits);
+            if((trailSL - ask) >= minDist && (curSL == 0.0 || trailSL < curSL))
               {
-               if(!hasNew || trailSL < newSL)
+               double stepPts = (g_pointValuePos > 0.0) ? (InpTrailStepUSD / g_pointValuePos) : 0.0;
+               if(curSL == 0.0 || (curSL - trailSL) >= stepPts * _Point)
                  {
-                  newSL  = trailSL;
-                  hasNew = true;
+                  if(!hasNew || trailSL < newSL)
+                    {
+                     newSL  = trailSL;
+                     hasNew = true;
+                    }
                  }
               }
            }
@@ -528,7 +604,7 @@ void ProtectProfit(const ulong ticket)
   }
 
 //+------------------------------------------------------------------+
-//| فتح صفقة بيع (الاتجاه الوحيد المسموح)                            |
+//| فتح صفقة بيع (الاتجاه الأساسي - صيد الانهيار)                    |
 //+------------------------------------------------------------------+
 bool OpenSell()
   {
@@ -567,21 +643,70 @@ bool OpenSell()
   }
 
 //+------------------------------------------------------------------+
+//| فتح صفقة شراء بعد إغلاق البيع (جديد 3.07) - لالتقاط الارتداد     |
+//+------------------------------------------------------------------+
+bool OpenBuy()
+  {
+   MqlTick t;
+   if(!SymbolInfoTick(_Symbol, t))
+      return false;
+   double price = t.ask;
+
+   double sl = 0.0, tp = 0.0;
+   if(g_buySlPoints > 0.0)
+      sl = price - g_buySlPoints * _Point;
+   if(g_buyTpPoints > 0.0)
+      tp = price + g_buyTpPoints * _Point;
+
+   long   stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double minDist    = MathMax((double)stopsLevel, 1.0) * _Point;
+   if(sl > 0.0 && (price - sl) < minDist)
+      sl = price - minDist;
+   if(tp > 0.0 && (tp - price) < minDist)
+      tp = price + minDist;
+   sl = NormalizeDouble(sl, _Digits);
+   tp = NormalizeDouble(tp, _Digits);
+
+   bool ok = g_trade.PositionOpen(_Symbol, ORDER_TYPE_BUY, g_lot, price, sl, tp, "PainX_BuyAfterSell");
+   if(ok && g_trade.ResultRetcode() == TRADE_RETCODE_DONE)
+     {
+      g_buyPending    = false;
+      g_buyEntryBar   = iTime(_Symbol, PERIOD_M1, 0);
+      g_lastTradeTime = TimeCurrent();
+      g_tradesToday++;
+      PrintFormat("PainX EA: فتح شراء بعد البيع | لوت=%.2f | ستوب=%.0f نقطة (%.2f$) | الخروج بعد %d شمعة دقيقة",
+                  g_lot, g_buySlPoints, InpBuyStopUSD, InpBuyCandlesM1);
+      return true;
+     }
+   PrintFormat("PainX EA: فشل فتح الشراء | retcode=%u | %s",
+               g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
+   return false;
+  }
+
+//+------------------------------------------------------------------+
 //| منطق الدخول: بيع داخل نافذة استحقاق الانهيار فقط                 |
 //+------------------------------------------------------------------+
 void TryEnter()
   {
    if(g_halted || !TerminalAllowed() || !SpreadOK())
       return;
+
+   int buyCnt = 0, sellCnt = 0;
+   if(CountMyPositions(buyCnt, sellCnt) >= InpMaxPositions)
+      return;
+
+   // (3.07) الشراء بعد البيع: أولوية فورية بعد إغلاق أي صفقة بيع
+   if(g_buyPending)
+     {
+      OpenBuy();
+      return;
+     }
+
    if(InpMaxTradesPerDay > 0 && g_tradesToday >= InpMaxTradesPerDay)
       return;
    if(InpMinSecondsBetween > 0 && g_lastTradeTime > 0 && (TimeCurrent() - g_lastTradeTime) < InpMinSecondsBetween)
       return;
    if(!LossCooldownOK())
-      return;
-
-   int buyCnt = 0, sellCnt = 0;
-   if(CountMyPositions(buyCnt, sellCnt) >= InpMaxPositions)
       return;
    if(sellCnt > 0)
       return;
@@ -617,7 +742,9 @@ string EntryBlockReason()
      }
    int b = 0, s = 0;
    if(CountMyPositions(b, s) >= InpMaxPositions)
-      return "يوجد صفقة مفتوحة الآن";
+      return (b > 0) ? "صفقة شراء مفتوحة - تخرج بعد شمعات الدقيقة أو التتبع" : "يوجد صفقة بيع مفتوحة الآن";
+   if(g_buyPending)
+      return "بانتظار فتح الشراء بعد إغلاق البيع";
    if(InpEntryMode == ENTRY_CRASH_RIDE)
      {
       if(!CrashActive())
@@ -659,8 +786,8 @@ void UpdatePanel()
       state = "منطقة متأخرة (سبايك متأخر)";
 
    string s = "";
-   s += "===== PainX Sell EA v3.06 (صيد الانهيار + حماية) =====\n";
-   s += "الرمز: " + _Symbol + " | بيع فقط (إجباري)\n";
+   s += "===== PainX EA v3.07 (صيد الانهيار + شراء الارتداد) =====\n";
+   s += "الرمز: " + _Symbol + " | بيع أساسي + شراء بعد البيع\n";
    s += "-----------------------------------------\n";
    s += "اللوت: " + DoubleToString(g_lot, 2) + "\n";
    s += "الخسارة القصوى: " + DoubleToString(InpStopLossUSD, 2) + "$ (ستوب عند " + DoubleToString(g_slPoints, 0) + " نقطة)\n";
@@ -679,6 +806,10 @@ void UpdatePanel()
    if(InpUseTrailing)
       prot += "| ستوب متحرك: يحجز " + DoubleToString(InpLockPct, 0) + "% من الربح من +" + DoubleToString(InpLockStartUSD, 1) + "$";
    s += "حماية الأرباح: " + ((prot == "") ? "معطلة" : prot) + "\n";
+   if(InpUseBuyAfterSell)
+      s += "الشراء بعد البيع: مفعّل | خروج بعد " + IntegerToString(InpBuyCandlesM1) + " شمعة دقيقة | ستوب الشراء " + DoubleToString(InpBuyStopUSD, 1) + "$\n";
+   else
+      s += "الشراء بعد البيع: معطل\n";
    if(g_avgTickPts > 0.0)
       s += "متوسط حركة التيك: " + DoubleToString(g_avgTickPts, 1) + " نقطة\n";
    double shownTh = (InpSpikeMinPoints > 0) ? (double)InpSpikeMinPoints : g_spikeAutoPts;
@@ -686,7 +817,13 @@ void UpdatePanel()
       s += "عتبة السبايك: " + DoubleToString(shownTh, 0) + " نقطة" + ((InpSpikeMinPoints > 0) ? " (يدوي)" : " (تلقائي)") + "\n";
    s += "سبب عدم الدخول الآن: " + EntryBlockReason() + "\n";
    s += "-----------------------------------------\n";
-   s += "صفقات مفتوحة: " + IntegerToString(sellCnt) + " (بيع)\n";
+   s += "صفقات مفتوحة: " + IntegerToString(sellCnt) + " بيع / " + IntegerToString(buyCnt) + " شراء\n";
+   if(buyCnt > 0 && g_buyEntryBar > 0 && InpBuyCandlesM1 > 0)
+     {
+      int remainB = InpBuyCandlesM1 - (int)((iTime(_Symbol, PERIOD_M1, 0) - g_buyEntryBar) / 60);
+      if(remainB > 0)
+         s += ">>> صفقة الشراء: تخرج بعد " + IntegerToString(remainB) + " شمعة دقيقة <<<\n";
+     }
    s += "صفقات اليوم: " + IntegerToString(g_tradesToday) + ((InpMaxTradesPerDay > 0) ? (" / " + IntegerToString(InpMaxTradesPerDay)) : " (بلا حد)") + "\n";
    s += "الفاصل بين الصفقات: " + ((InpMinSecondsBetween > 0) ? (IntegerToString(InpMinSecondsBetween / 60) + " دقيقة") : "معطل") + "\n";
    s += "التوقف بعد الخسارة: " + ((InpLossCooldownMin > 0) ? (IntegerToString(InpLossCooldownMin) + " دقيقة") : "معطل - البوت يعمل دائماً") + "\n";
@@ -769,6 +906,16 @@ int OnInit()
    if(g_tpPoints > 0.0 && g_tpPoints < minPts)
       g_tpPoints = minPts;
 
+   // (3.07) مسافتا ستوب وهدف الشراء
+   if(InpBuyStopUSD > 0.0)
+      g_buySlPoints = InpBuyStopUSD / g_pointValuePos;
+   if(InpBuyTakeProfitUSD > 0.0)
+      g_buyTpPoints = InpBuyTakeProfitUSD / g_pointValuePos;
+   if(g_buySlPoints > 0.0 && g_buySlPoints < minPts)
+      g_buySlPoints = minPts;
+   if(g_buyTpPoints > 0.0 && g_buyTpPoints < minPts)
+      g_buyTpPoints = minPts;
+
    // 5) تهيئة العداد من التاريخ
    InitFromHistory();
    if(InpEntryMode == ENTRY_CRASH_RIDE && g_avgTickPts <= 0.0)
@@ -794,12 +941,14 @@ int OnInit()
    g_curDay     = dt.day_of_year;
    g_dayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-   PrintFormat("PainX EA v3.06 بدأ | الرمز=%s | بيع فقط | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | نمط الدخول=%s | حماية الأرباح=%s | فاصل=%d ثانية | انتظار بعد خسارة=%d دقيقة",
+   PrintFormat("PainX EA v3.07 بدأ | الرمز=%s | بيع أساسي + شراء بعد البيع | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | نمط الدخول=%s | حماية الأرباح=%s | فاصل=%d ثانية | انتظار بعد خسارة=%d دقيقة",
                _Symbol, g_lot, InpStopLossUSD, InpTakeProfitUSD,
                (InpEntryMode == ENTRY_CRASH_RIDE ? "صيد الانهيار الحي" : "نافذة الاستحقاق"),
                ((InpUseBreakEven || InpUseTrailing) ? "مفعلة" : "معطلة"),
                InpMinSecondsBetween, InpLossCooldownMin);
-   Print("PainX EA v3.06: كل آليات التوقف ملغاة - بلا فاصل بين الصفقات، بلا حد صفقات يومي، بلا انتظار بعد الخسارة، بلا حد خسارة يومي. البوت يعمل دائماً مهما كانت الخسارة + ستوب متحرك يحجز 75% من الربح أول بأول.");
+   Print("PainX EA v3.07: كل آليات التوقف ملغاة - بلا فاصل بين الصفقات، بلا حد صفقات يومي، بلا انتظار بعد الخسارة، بلا حد خسارة يومي. البوت يعمل دائماً مهما كانت الخسارة + ستوب متحرك يحجز 75% من الربح أول بأول.");
+   if(InpUseBuyAfterSell)
+      PrintFormat("PainX EA v3.07: الشراء بعد البيع مفعّل - بعد إغلاق أي بيع يفتح شراء يخرج بعد %d شمعة دقيقة | ستوب الشراء=%.2f$ | حماية الأرباح (قفل تعادل + تتبع 75%) تعمل على الشراء أيضاً.", InpBuyCandlesM1, InpBuyStopUSD);
    if(InpMaxDailyLossPct <= 0.0)
       Print("PainX EA: حد الخسارة اليومي معطل بأمر المستخدم - البوت يستمر بالتداول مهما كانت الخسارة.");
    return(INIT_SUCCEEDED);
@@ -871,7 +1020,15 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    g_lastCloseTime   = TimeCurrent();
    g_lastCloseProfit = profit;
 
-   PrintFormat("PainX EA: تم إغلاق صفقة | السبب: %s | النتيجة: %.2f %s",
-               reason, profit, AccountInfoString(ACCOUNT_CURRENCY));
+   // (3.07) نوع الصفقة القافلة: شراء = أُغلقت صفقة بيع → جهّز شراء الارتداد
+   long dtype = HistoryDealGetInteger(trans.deal, DEAL_TYPE);
+   if(dtype == DEAL_TYPE_BUY && InpUseBuyAfterSell)
+     {
+      g_buyPending = true;
+      PrintFormat("PainX EA: أُغلقت صفقة بيع - فتح شراء الارتداد في التيك القادم (خروج بعد %d شمعة دقيقة، ستوب %.2f$).", InpBuyCandlesM1, InpBuyStopUSD);
+     }
+
+   PrintFormat("PainX EA: تم إغلاق صفقة %s | السبب: %s | النتيجة: %.2f %s",
+               (dtype == DEAL_TYPE_BUY ? "بيع" : "شراء"), reason, profit, AccountInfoString(ACCOUNT_CURRENCY));
   }
 //+------------------------------------------------------------------+
