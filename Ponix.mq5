@@ -4,7 +4,7 @@
 //|                                                                  |
 //|  المواصفات (حسب الطلب):                                          |
 //|   - يعمل على PainX فقط (يرفض أي رمز آخر)                        |
-//|   - بيع أساسي إجباري + شراء بعد البيع (3.07) يخرج بعد 7 دقائق (7 شمعات دقيقة)                            |
+//|   - بيع أساسي إجباري + شراء بعد البيع (3.14) يخرج بعد 6 شمعات دقيقة                            |
 //|   - لوت ثابت 0.1 (الحد الأدنى للمنصة)                                               |
 //|   - خسارة قصوى 3 دولار (ستوب دولاري)                            |
 //|   - هدف ربح 10 دولارات (خمسة أضعاف الخسارة)                      |
@@ -16,6 +16,7 @@
 //|   - جديد 3.11: فتح الشراء فوراً في نفس لحظة إغلاق البيع (أسرع تقاط ممكن - بدون انتظار تيك) | خروج الشراء بعد 7 دقائق (7 شمعات) أو 7 شمعات صعود محسوبة منذ فتح الشراء فقط
 //|   - جديد 3.12: إصلاح "شمعات السبايك الهابطة ما تشتغل صفقاتها" - أول تيك هبوط عنيف يفتح بيعاً فورياً في كل الأنماط (كان يعمل في نمط واحد فقط) والقناص يبقى مساراً ثانياً
 //|   - جديد 3.13: تسريع البيع بأمر المستخدم - كسر قاع الدقيقة يفتح البيع فوراً في نفس التيك (بدون انتظار تصحيح أو تأكيد هبوط) والقاع المرجعي = آخر شمعة دقيقة فقط
+//|   - جديد 3.14: إصلاح ما بعد إغلاق البيع - الشراء لا يُفتح أثناء الهبوط بل مع أول شمعة دقيقة صاعدة ويخرج بعد 6 شمعات | بيع جديد تلقائي بعد اكتمال 10 شموع صعود متتالية لصيد الهبوط القادم
 //|   - جديد 3.06: إلغاء كل آليات التوقف بأمر المستخدم - بلا فاصل بين الصفقات، بلا حد صفقات يومي، بلا انتظار بعد الخسارة، بلا حد خسارة يومي - البوت يعمل دائماً مهما كانت الخسارة
 //|   - 3.05: إلغاء التوقف اليومي | 3.04: ستوب متحرك 75% | 3.03: حجز 50% | 3.02: عتبة سبايك تلقائية + قفل الاستحقاق | 3.01: لوت 0.1 + قفل تعادل + تتبع أرباح     |
 //|                                                                  |
@@ -23,8 +24,8 @@
 //|     تجريبي أولاً ولا تخاطر بمال لا تتحمل خسارته.                 |
 //+------------------------------------------------------------------+
 #property copyright "PainX Sell EA"
-#property version   "3.13"
-#property description "PainX: كسر قاع الدقيقة = بيع فوري + سبايك هابط = بيع فوري | شراء فوري بعد البيع يخرج بعد 7 دقائق | ستوب يتبع السعر | خسارة 3$ | هدف 10$"
+#property version   "3.14"
+#property description "PainX: كسر قاع الدقيقة = بيع فوري + بيع بعد 10 شموع صعود | شراء مع أول شمعة صاعدة ويخرج بعد 6 شمعات | ستوب يتبع السعر | خسارة 3$ | هدف 10$"
 
 #include <Trade\Trade.mqh>
 
@@ -74,11 +75,12 @@ input double InpOverdueMin          = 0.50;     // أدنى تأخر × المت
 
 input group "====== صيد البيع السريع: كسر القاع = بيع فوري (3.13) ======"
 input int    InpBreakLookback       = 1;        // عدد شموع الدقيقة لتحديد القاع (1 = قاع آخر شمعة - الأسرع)
+input int    InpSellAfterBullCandles = 10;      // (3.14) فتح بيع بعد كم شمعة صعود متتالية لصيد الهبوط (0 = معطل)
 
 input group "====== الشراء بعد البيع (جديد 3.07) ======"
 input bool   InpUseBuyAfterSell   = true;     // تفعيل الشراء بعد إغلاق البيع
-input int    InpBuyCandlesM1      = 7;        // خروج الشراء بعد كم شمعة دقيقة (7 = 7 دقائق - أمر المستخدم)
-input int    InpBuyUpCandles      = 7;        // (3.10) خروج الشراء بعد شمعات صعود متتالية ثم صيد بيع (0 = معطل)
+input int    InpBuyCandlesM1      = 6;        // خروج الشراء بعد كم شمعة دقيقة (6 = 6 دقائق - أمر المستخدم 3.14)
+input int    InpBuyUpCandles      = 6;        // (3.14) خروج الشراء بعد 6 شموع صعود متتالية ثم صيد بيع (0 = معطل)
 input double InpBuyStopUSD        = 3.0;      // ستوب الشراء بالدولار
 input double InpBuyTakeProfitUSD  = 0.0;      // هدف الشراء بالدولار (0 = معطل - الخروج بالشمعات)
 input bool   InpSellWhileBuy      = true;     // (3.08) بيع جديد حتى لو الشراء مفتوح - لا تضيع أي هبطة
@@ -109,7 +111,8 @@ bool     g_lastTickSpike   = false;  // (3.08) هل تيك الأخير هبوط
 
 // (3.13) صيد البيع السريع: كسر قاع الدقيقة = إشارة بيع فورية
 double   g_brokenLevel   = 0.0;      // مستوى القاع المكسور (للعرض)
-bool     g_sellDropReady = false;    // كسر القاع الآن = إشارة بيع لحظية
+bool     g_sellDropReady = false;    // كسر القاع أو اكتمال شموع الصعود = إشارة بيع لحظية
+bool     g_soldThisRun   = false;    // (3.14) تم فتح بيع لهذه الموجة الصاعدة - لا تكرار حتى تنقطع الشموع الصاعدة
 datetime g_buyEntryBar     = 0;      // (3.07) وقت شمعة الدقيقة عند فتح الشراء
 double   g_buySlPoints     = 0.0;    // (3.07) مسافة ستوب الشراء بالنقاط
 double   g_buyTpPoints     = 0.0;    // (3.07) مسافة هدف الشراء بالنقاط (0 = معطل)
@@ -368,6 +371,21 @@ void UpdateSellHunter()
       return;
    double bid = t.bid;
 
+   // (3.14) إشارة البيع بعد اكتمال 10 شموع صعود متتالية - صيد الهبوط القادم بعد موجة الصعود الطويلة
+   // مرة واحدة لكل موجة: لا تكرار حتى تنقطع الشموع الصاعدة بشمعة هابطة ثم تبدأ موجة جديدة
+   if(InpSellAfterBullCandles > 0)
+     {
+      int run = CountBullishRun(50);
+      if(run <= 0)
+         g_soldThisRun = false;   // الشموع الصاعدة انقطعت - تسليح الإشارة من جديد
+      else if(run >= InpSellAfterBullCandles && !g_soldThisRun)
+        {
+         g_soldThisRun   = true;
+         g_sellDropReady = true;  // يدخل البيع عبر TryEnter في نفس التيك
+         PrintFormat("PainX EA (3.14): اكتملت %d شمعة صعود متتالية - فتح بيع لصيد الهبوط القادم.", run);
+        }
+     }
+
    // القاع المرجعي: أدنى قاع لآخر InpBreakLookback شمعة دقيقة مكتملة
    double lowest = DBL_MAX;
    int lb = (InpBreakLookback >= 1) ? InpBreakLookback : 1;
@@ -593,14 +611,14 @@ void ManagePositions()
          int barsElapsed = (int)((curBar - g_buyEntryBar) / 60);
          if(barsElapsed >= InpBuyCandlesM1)
            {
-            PrintFormat("PainX EA (3.11): اكتملت %d شمعة دقيقة (7 دقائق) - إغلاق الشراء #%I64u | النتيجة=%.2f | الانتقال لصيد بيع جديد", InpBuyCandlesM1, tk, pl);
+            PrintFormat("PainX EA (3.14): اكتملت %d شمعة دقيقة (%d دقائق) - إغلاق الشراء #%I64u | النتيجة=%.2f | الانتقال لصيد بيع جديد", InpBuyCandlesM1, InpBuyCandlesM1, tk, pl);
             g_trade.PositionClose(tk, (ulong)InpSlippagePoints);
             ResetSellHunter();
             continue;
            }
         }
 
-      // (3.11) خروج الشراء بسلسلة شمعات صعود متتالية منذ فتحه (7 شمعات خضراء = نهاية موجة الصعود) ثم البحث عن بيع
+      // (3.14) خروج الشراء بسلسلة شمعات صعود متتالية منذ فتحه (اكتمال الشموع الخضراء = نهاية موجة الصعود) ثم البحث عن بيع
       if(isBuy && InpBuyUpCandles > 0)
         {
          int sinceBars = 50;
@@ -809,7 +827,7 @@ bool OpenBuy()
       g_lastTradeTime = TimeCurrent();
       g_tradesToday++;
       ResetSellHunter();        // (3.13) صيد بيع جديد يبدأ بعد خروج الشراء: بانتظار كسر قاع جديد
-      PrintFormat("PainX EA (3.11): فتح شراء فوري بعد البيع | لوت=%.2f | ستوب=%.0f نقطة (%.2f$) | الخروج بعد %d دقائق أو %d شمعة صعود متتالية",
+      PrintFormat("PainX EA (3.14): فتح شراء الارتداد مع أول شمعة دقيقة صاعدة | لوت=%.2f | ستوب=%.0f نقطة (%.2f$) | الخروج بعد %d شمعات أو %d شموع صعود متتالية",
                   g_lot, g_buySlPoints, InpBuyStopUSD, InpBuyCandlesM1, InpBuyUpCandles);
       return true;
      }
@@ -829,18 +847,22 @@ void TryEnter()
    int buyCnt = 0, sellCnt = 0;
    CountMyPositions(buyCnt, sellCnt);
 
-   // (3.07) الشراء بعد البيع: أولوية فورية بعد إغلاق أي صفقة بيع
+   // (3.14) الشراء بعد البيع: ننتظر أول شمعة دقيقة صاعدة (السعر فوق افتتاح الشمعة) ثم نلتقط الصعود
    if(g_buyPending)
      {
       if(buyCnt >= InpMaxPositions)
         {
-         g_buyPending = false;   // (3.11) شراء مفتوح بالفعل - إلغاء الطلب المعلق القديم
+         g_buyPending = false;   // شراء مفتوح بالفعل - إلغاء الطلب المعلق القديم
          return;
         }
-      OpenBuy();
+      // (3.14) لحظة صيرورة الشمعة الحالية صاعدة: أول تيك فوق افتتاح الشمعة = التقاط الصعود فوراً
+      MqlTick btk;
+      double curOpen = iOpen(_Symbol, PERIOD_M1, 0);
+      if(SymbolInfoTick(_Symbol, btk) && curOpen > 0.0 && btk.bid > curOpen)
+         OpenBuy();
       if(!InpSellWhileBuy)
          return;
-      // (3.08) بعد فتح الشراء نكمل فحص إشارة البيع في نفس التيك - لا نفوّت هبطة مستمرة
+      // (3.08) حتى لو الشراء لم يُفتح بعد نكمل فحص إشارة البيع في نفس التيك - لا نفوّت هبطة مستمرة
      }
 
    if(InpMaxTradesPerDay > 0 && g_tradesToday >= InpMaxTradesPerDay)
@@ -892,14 +914,20 @@ string EntryBlockReason()
    if(b >= InpMaxPositions && !InpSellWhileBuy)
       return "صفقة شراء مفتوحة - تخرج بعد " + IntegerToString(InpBuyCandlesM1) + " دقائق أو " + IntegerToString(InpBuyUpCandles) + " شمعة صعود متتالية";
    if(g_buyPending)
-      return "بانتظار فتح الشراء بعد إغلاق البيع";
+      return "بانتظار أول شمعة دقيقة صاعدة لفتح شراء الارتداد (3.14)";
    if(InpEntryMode == ENTRY_BREAK_RETEST)
      {
       if(InpInstantSpikeEntry && g_lastTickSpike)
          return "تيك هبوط عنيف الآن - دخول بيع فوري!";
+      if(InpSellAfterBullCandles > 0 && !g_soldThisRun)
+        {
+         int runNow = CountBullishRun(50);
+         if(runNow > 0 && runNow < InpSellAfterBullCandles)
+            return "موجة صعود جارية: " + IntegerToString(runNow) + "/" + IntegerToString(InpSellAfterBullCandles) + " شمعة - البيع عند الاكتمال";
+        }
       if(g_sellDropReady)
-         return "كسر قاع الدقيقة الآن - دخول بيع فوري!";
-      return "بانتظار كسر قاع الدقيقة - الكسر نفسه يفتح البيع فوراً (3.13)";
+         return "إشارة بيع نشطة الآن - دخول فوري!";
+      return "بانتظار كسر قاع الدقيقة أو اكتمال 10 شموع صعود (3.14)";
      }
    if(InpEntryMode == ENTRY_CRASH_RIDE)
      {
@@ -944,7 +972,7 @@ void UpdatePanel()
       state = "منطقة متأخرة (سبايك متأخر)";
 
    string s = "";
-   s += "===== PainX EA v3.13 (كسر قاع الدقيقة = بيع فوري) =====\n";
+   s += "===== PainX EA v3.14 (بيع بعد 10 شموع صعود + كسر القاع) =====\n";
    s += "الرمز: " + _Symbol + " | بيع أساسي + شراء بعد البيع\n";
    s += "-----------------------------------------\n";
    s += "اللوت: " + DoubleToString(g_lot, 2) + "\n";
@@ -956,15 +984,18 @@ void UpdatePanel()
    s += "تيكات منذ آخر سبايك هابط: " + IntegerToString(g_ticksSince) + "\n";
    s += "نافذة الدخول: [" + IntegerToString(start) + " .. " + IntegerToString(end) + "] تيك\n";
    s += "الحالة: " + state + "\n";
-   string modeStr = (InpEntryMode == ENTRY_BREAK_RETEST) ? "كسر قاع الدقيقة = بيع فوري (3.13)" :
+   string modeStr = (InpEntryMode == ENTRY_BREAK_RETEST) ? "كسر القاع فوري + بيع بعد 10 شموع صعود (3.14)" :
                     ((InpEntryMode == ENTRY_CRASH_RIDE) ? "صيد الانهيار الحي" : "نافذة الاستحقاق");
    s += "نمط الدخول: " + modeStr + "\n";
    if(InpEntryMode == ENTRY_BREAK_RETEST)
      {
       int lbShow = (InpBreakLookback >= 1) ? InpBreakLookback : 1;
+      int runShow = CountBullishRun(50);
       string ph = g_sellDropReady
-                ? ("كسر القاع عند " + DoubleToString(g_brokenLevel, _Digits) + " - بيع فوري!")
-                : ("بانتظار كسر قاع آخر " + IntegerToString(lbShow) + " شمعة دقيقة - الكسر يفتح البيع فوراً");
+                ? ("إشارة بيع نشطة - دخول فوري!")
+                : ((InpSellAfterBullCandles > 0 && runShow > 0)
+                   ? ("موجة صعود " + IntegerToString(runShow) + "/" + IntegerToString(InpSellAfterBullCandles) + " شمعة | بانتظار كسر قاع آخر " + IntegerToString(lbShow) + " شمعة دقيقة")
+                   : ("بانتظار كسر قاع آخر " + IntegerToString(lbShow) + " شمعة دقيقة - الكسر يفتح البيع فوراً"));
       s += "صيد البيع: " + ph + "\n";
      }
    s += "سرعة الالتقاط: " + ((InpInstantSpikeEntry) ? "دخول بيع فوري على أول تيك هبوط عنيف (في كل الأنماط)" : "انتظار اكتمال نافذة الانهيار") + "\n";
@@ -976,7 +1007,7 @@ void UpdatePanel()
       prot += "| الستوب يتبع السعر من أول سنت ربح: يحجز " + DoubleToString(InpLockPct, 0) + "% من أي ربح لحظياً (خطوة " + DoubleToString(InpTrailStepUSD, 2) + "$)";
    s += "حماية الأرباح: " + ((prot == "") ? "معطلة" : prot) + "\n";
    if(InpUseBuyAfterSell)
-      s += "الشراء بعد البيع: مفعّل | فتح فوري لحظة إغلاق البيع | خروج بعد " + IntegerToString(InpBuyCandlesM1) + " دقائق" + ((InpBuyUpCandles > 0) ? (" أو بعد " + IntegerToString(InpBuyUpCandles) + " شمعة صعود متتالية") : "") + " | ستوب الشراء " + DoubleToString(InpBuyStopUSD, 1) + "$\n";
+      s += "الشراء بعد البيع: مفعّل | يُفتح مع أول شمعة دقيقة صاعدة بعد إغلاق البيع | خروج بعد " + IntegerToString(InpBuyCandlesM1) + " شمعات" + ((InpBuyUpCandles > 0) ? (" أو بعد " + IntegerToString(InpBuyUpCandles) + " شمعة صعود متتالية") : "") + " | ستوب الشراء " + DoubleToString(InpBuyStopUSD, 1) + "$\n";
    else
       s += "الشراء بعد البيع: معطل\n";
    if(g_avgTickPts > 0.0)
@@ -1109,6 +1140,11 @@ int OnInit()
    if(InpEntryMode == ENTRY_BREAK_RETEST)
       PrintFormat("PainX EA (3.13): صيد البيع السريع = كسر قاع آخر %d شمعة دقيقة يفتح البيع فوراً في نفس التيك - بدون انتظار تصحيح أو تأكيد هبوط. السبايك العنيف يدخل فوراً أيضاً.",
                   ((InpBreakLookback >= 1) ? InpBreakLookback : 1));
+   // (3.14) إشارة البيع بعد موجة الصعود
+   if(InpEntryMode == ENTRY_BREAK_RETEST && InpSellAfterBullCandles > 0)
+      PrintFormat("PainX EA (3.14): إشارة بيع إضافية - بعد اكتمال %d شمعة صعود متتالية يفتح بيعاً لصيد الهبوط القادم (مرة واحدة لكل موجة صعود).", InpSellAfterBullCandles);
+   if(InpUseBuyAfterSell)
+      Print("PainX EA (3.14): الشراء بعد البيع لا يُفتح أثناء الهبوط - ينتظر أول شمعة دقيقة صاعدة (أول تيك فوق افتتاحها) ثم يلتقط الصعود.");
 
    // 6) تحذير ذكي لو مسافة الستوب أضيق من تقلب الرمز
    if(g_avgTickPts > 0.0 && g_slPoints > 0.0 && g_slPoints < 20.0 * g_avgTickPts)
@@ -1130,17 +1166,17 @@ int OnInit()
    g_curDay     = dt.day_of_year;
    g_dayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-   PrintFormat("PainX EA v3.13 بدأ | الرمز=%s | بيع: كسر قاع الدقيقة = بيع فوري + سبايك فوري + شراء الارتداد | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | دخول فوري=%s | بيع أثناء الشراء=%s | حماية الأرباح=%s",
+   PrintFormat("PainX EA v3.14 بدأ | الرمز=%s | بيع: كسر القاع فوري + بيع بعد 10 شموع صعود + شراء أول شمعة صاعدة | لوت=%.2f | خسارة=%.2f$ | هدف=%.2f$ | بيع أثناء الشراء=%s | حماية الأرباح=%s",
                _Symbol, g_lot, InpStopLossUSD, InpTakeProfitUSD,
-               (InpEntryMode == ENTRY_BREAK_RETEST ? "كسر القاع = بيع فوري" : (InpEntryMode == ENTRY_CRASH_RIDE ? "صيد الانهيار الحي" : "نافذة الاستحقاق")),
+               (InpEntryMode == ENTRY_BREAK_RETEST ? "كسر القاع + 10 شموع صعود" : (InpEntryMode == ENTRY_CRASH_RIDE ? "صيد الانهيار الحي" : "نافذة الاستحقاق")),
                (InpInstantSpikeEntry ? "مفعل - أول تيك عنيف يدخل فوراً" : "بانتظار النافذة"),
                (InpSellWhileBuy ? "مسموح" : "معطل"),
                ((InpUseBreakEven || InpUseTrailing) ? "مفعلة" : "معطلة"));
-   Print("PainX EA v3.13: أسرع قانون بيع - كسر قاع آخر شمعة دقيقة يفتح البيع فوراً في نفس التيك بدون انتظار تصحيح، وأول تيك هبوط عنيف يدخل فوراً أيضاً (لا هبطة تضيع). الشراء يُفتح فور إغلاق البيع ويخرج بعد 7 شمعات صعود أو 7 دقائق.");
+   Print("PainX EA v3.14: الشراء لا يُفتح أثناء الهبوط - ينتظر أول شمعة دقيقة صاعدة ثم يلتقط الصعود ويخرج بعد 6 شمعات أو 6 شموع صعود متتالية. البيع: كسر قاع الدقيقة فوري + سبايك فوري + بيع تلقائي بعد اكتمال 10 شموع صعود متتالية لصيد الهبوط القادم.");
    Print("PainX EA v3.11: الستوب يتبع السعر من أول سنت ربح - يحجز 75% من أي ربح لحظياً بخطوة 0.01$ ولا يتراجع أبداً (للبيع والشراء).");
-   Print("PainX EA v3.11: سرعة الالتقاط القصوى - شراء الارتداد يُفتح في نفس لحظة إغلاق البيع بدون انتظار تيك + بيع جديد حتى لو الشراء مفتوح. كل آليات التوقف ما زالت ملغاة.");
+   Print("PainX EA v3.14: سرعة الالتقاط القصوى - بيع جديد حتى لو الشراء مفتوح + إشارات بيع ثلاثة: كسر القاع، السبايك العنيف، واكتمال 10 شموع صعود. كل آليات التوقف ما زالت ملغاة.");
    if(InpUseBuyAfterSell)
-      PrintFormat("PainX EA v3.11: الشراء بعد البيع مفعّل - يُفتح فوراً في نفس لحظة إغلاق البيع (أسرع تقاط ممكن) ويخرج بعد %d دقائق أو %d شمعة صعود متتالية | ستوب الشراء=%.2f$ | حماية الأرباح تعمل على الشراء أيضاً.", InpBuyCandlesM1, InpBuyUpCandles, InpBuyStopUSD);
+      PrintFormat("PainX EA v3.14: الشراء بعد البيع مفعّل - ينتظر أول شمعة دقيقة صاعدة بعد إغلاق البيع ثم يدخل ويخرج بعد %d شمعات أو %d شموع صعود متتالية | ستوب الشراء=%.2f$ | حماية الأرباح تعمل على الشراء أيضاً.", InpBuyCandlesM1, InpBuyUpCandles, InpBuyStopUSD);
    if(InpMaxDailyLossPct <= 0.0)
       Print("PainX EA: حد الخسارة اليومي معطل بأمر المستخدم - البوت يستمر بالتداول مهما كانت الخسارة.");
    return(INIT_SUCCEEDED);
@@ -1225,12 +1261,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       CountMyPositions(b, s);
       if(b == 0)
         {
+         // (3.14) لا شراء أثناء الهبوط - ننتظر أول شمعة دقيقة صاعدة (السعر فوق افتتاحها) ثم نلتقط الصعود
          g_buyPending = true;
-         // (3.11) أسرع تقاط ممكن: فتح الشراء في نفس لحظة إغلاق البيع - بدون انتظار تيك قادم
-         if(TerminalAllowed() && SpreadOK())
-            OpenBuy();
-         if(g_buyPending)
-            PrintFormat("PainX EA (3.11): أُغلقت صفقة بيع - شراء الارتداد يُفتح فوراً (خروج بعد %d دقائق أو %d شمعة صعود متتالية، ستوب %.2f$).", InpBuyCandlesM1, InpBuyUpCandles, InpBuyStopUSD);
+         PrintFormat("PainX EA (3.14): أُغلقت صفقة بيع - بانتظار أول شمعة دقيقة صاعدة لفتح شراء الارتداد (خروج بعد %d شمعات أو %d شمعة صعود متتالية، ستوب %.2f$).", InpBuyCandlesM1, InpBuyUpCandles, InpBuyStopUSD);
         }
       else
          Print("PainX EA: أُغلقت صفقة بيع والشراء لا يزال مفتوحاً - لن يُفتح شراء إضافي.");
