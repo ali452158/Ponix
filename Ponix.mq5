@@ -20,6 +20,7 @@
 //|   - جديد 3.15: بيع فقط بأمر المستخدم - إيقاف شراء الارتداد وإيقاف إشارة البيع بعد 10 شموع صعود - صفقات هبوط فقط على الهابط (كسر قاع الدقيقة + السبايك العنيف)
 //|   - جديد 3.16: تثبيت اللوت 0.1 بأمر المستخدم - حذف مدخل اللوت من الإعدادات نهائياً - كل الصفقات تُفتح بحجم 0.1 ثابت لا يتغير
 //|   - جديد 3.17: صيد الهبوط على فريم خمس دقائق بأمر المستخدم - القاع المرجعي = قاع آخر شمعة M5 مكتملة (مدخل InpBreakTF) - كسرها = بيع فوري | هبوط فقط
+//|   - جديد 3.18: قانون الانعكاس الواضح بأمر المستخدم - لا بيع إلا بعد انعكاس سعري واضح على ربع الساعة (حي: السعر كسر قاع آخر شمعة صاعدة | مكتمل: صاعدة ثم هابطة أغلقت تحت نهاية الصعود) ثم الدخول مع أول الهبوط (تيك عنيف أو كسر قاع خمس دقائق)
 //|   - جديد 3.06: إلغاء كل آليات التوقف بأمر المستخدم - بلا فاصل بين الصفقات، بلا حد صفقات يومي، بلا انتظار بعد الخسارة، بلا حد خسارة يومي - البوت يعمل دائماً مهما كانت الخسارة
 //|   - 3.05: إلغاء التوقف اليومي | 3.04: ستوب متحرك 75% | 3.03: حجز 50% | 3.02: عتبة سبايك تلقائية + قفل الاستحقاق | 3.01: لوت 0.1 + قفل تعادل + تتبع أرباح     |
 //|                                                                  |
@@ -27,8 +28,8 @@
 //|     تجريبي أولاً ولا تخاطر بمال لا تتحمل خسارته.                 |
 //+------------------------------------------------------------------+
 #property copyright "PainX Sell EA"
-#property version   "3.17"
-#property description "PainX: هبوط فقط على فريم خمس دقائق - كسر قاع M5 + السبايك = بيع فوري | اللوت مثبت 0.1 | خسارة 3$ | هدف 10$"
+#property version   "3.18"
+#property description "PainX: بيع بعد انعكاس واضح على ربع الساعة وخمس الدقائق - الدخول مع أول الهبوط | اللوت مثبت 0.1 | خسارة 3$ | هدف 10$"
 
 #include <Trade\Trade.mqh>
 
@@ -39,7 +40,7 @@ enum ENUM_CRASH_MODE
   {
    ENTRY_CRASH_RIDE = 0,   // صيد الانهيار الحي: يدخل أثناء الهبوط الفعلي
    ENTRY_DUE_WINDOW = 1,   // نافذة الاستحقاق: يدخل قبل موعد الانهيار (القديم)
-   ENTRY_BREAK_RETEST = 2  // (3.17) كسر قاع فريم الصيد = دخول بيع فوري (الافتراضي)
+   ENTRY_BREAK_RETEST = 2  // (3.18) انعكاس واضح على ربع الساعة ثم كسر القاع/التيك العنيف (الافتراضي)
   };
 
 //+------------------------------------------------------------------+
@@ -76,9 +77,9 @@ input double InpCrashMult           = 4.0;      // قوة الانهيار × م
 input bool   InpRequireOverdue      = false;    // اشتراط تأخر الانهيار عن دورته (عُطّل: كان يمنع صفقات كثيرة)
 input double InpOverdueMin          = 0.50;     // أدنى تأخر × المتوسط (لو فُعّل الشرط أعلاه)
 
-input group "====== صيد الهبوط على فريم خمس دقائق: كسر القاع = بيع فوري (3.17) ======"
-input ENUM_TIMEFRAMES InpBreakTF    = PERIOD_M5; // (3.17) فريم صيد الهبوط - خمس دقائق بأمر المستخدم (PERIOD_M1 للرجوع للدقيقة)
-input int    InpBreakLookback       = 1;        // عدد شموع فريم الصيد لتحديد القاع (1 = قاع آخر شمعة - الأسرع)
+input group "====== قانون الانعكاس الواضح: ربع ساعة + خمس دقائق (3.18) ======"
+input ENUM_TIMEFRAMES InpContextTF  = PERIOD_M15; // (3.18) فريم الانعكاس الواضح - ربع ساعة بأمر المستخدم
+input ENUM_TIMEFRAMES InpBreakTF    = PERIOD_M5;  // فريم إشارة الدخول - خمس دقائق بأمر المستخدم (3.17)
 input int    InpSellAfterBullCandles = 0;       // (3.15) معطل - البيع على الهابط فقط. لو أردت البيع بعد موجة صعود غيّرها إلى 10
 
 input group "====== الشراء بعد البيع (جديد 3.07) ======"
@@ -113,7 +114,7 @@ double   g_lastCloseProfit = 0.0;    // نتيجة آخر صفقة مغلقة (�
 bool     g_buyPending      = false;  // (3.07) جاهز لفتح شراء بعد إغلاق صفقة بيع
 bool     g_lastTickSpike   = false;  // (3.08) هل تيك الأخير هبوط عنيف؟ (مفتاح الدخول الفوري)
 
-// (3.17) صيد الهبوط: كسر قاع فريم الصيد (خمس دقائق) = إشارة بيع فورية
+// (3.18) قانون الانعكاس الواضح: انعكاس ربع ساعة + تيك عنيف أو كسر قاع خمس دقائق = بيع فوري
 double   g_brokenLevel   = 0.0;      // مستوى القاع المكسور (للعرض)
 bool     g_sellDropReady = false;    // كسر القاع أو اكتمال شموع الصعود = إشارة بيع لحظية
 bool     g_soldThisRun   = false;    // (3.14) تم فتح بيع لهذه الموجة الصاعدة - لا تكرار حتى تنقطع الشموع الصاعدة
@@ -341,13 +342,16 @@ bool OverdueEnough()
 //+------------------------------------------------------------------+
 bool EntrySignal()
   {
-   // (3.17) القانون المختصر بأمر المستخدم: كسر قاع فريم الصيد (خمس دقائق) = دخول فوري (بدون انتظار تصحيح أو تأكيد هبوط)
+   // (3.18) قانون الانعكاس الواضح: لا بيع نهائياً بدون انعكاس سعري واضح على ربع الساعة
    if(InpEntryMode == ENTRY_BREAK_RETEST)
      {
-      // (3.12) أول تيك هبوط عنيف يدخل بيعاً فورياً في كل الأنماط - لا سبايك يضيع
+      // (3.18) البوابة الإلزامية: انعكاس ربع ساعة واضح أولاً (حي أو مكتمل) - بدونه لا صفقات غلط
+      if(!ClearBearishReversal())
+         return false;
+      // (3.18) تيك هبوط عنيف أثناء الانعكاس = التقاط الهبوط من أول تيك
       if(InpInstantSpikeEntry && g_lastTickSpike)
          return true;
-      // (3.13) الكسر نفسه هو الإشارة - UpdateSellHunter يرفعها في نفس تيك الكسر
+      // (3.18) كسر قاع آخر شمعة خمس دقائق أثناء الانعكاس = الدخول مع أول الهبوط
       return g_sellDropReady;
      }
    if(InpEntryMode == ENTRY_CRASH_RIDE)
@@ -377,8 +381,36 @@ string TFName(const ENUM_TIMEFRAMES tf)
   }
 
 //+------------------------------------------------------------------+
-//| صيد الهبوط (3.17): كسر قاع فريم الصيد (خمس دقائق) = بيع فوري    |
-//| لا انتظار تصحيح ولا انتظار هبوط - الكسر نفسه هو الإشارة          |
+//| (3.18) انعكاس سعري واضح على ربع الساعة - بوابة البيع الإلزامية  |
+//| (أ) انعكاس حي: آخر شمعة صاعدة والسعر كسر قاعها الآن - الهبوط     |
+//|     بدأ من أولاه | (ب) انعكاس مكتمل: صاعدة ثم هابطة أغلقت تحت    |
+//|     نهاية الصعود                                                  |
+//+------------------------------------------------------------------+
+bool ClearBearishReversal()
+  {
+   double o1 = iOpen(_Symbol, InpContextTF, 1), c1 = iClose(_Symbol, InpContextTF, 1);
+   double lo1 = iLow(_Symbol, InpContextTF, 1);
+   if(o1 <= 0.0 || c1 <= 0.0 || lo1 <= 0.0)
+      return false;
+   MqlTick t;
+   if(!SymbolInfoTick(_Symbol, t))
+      return false;
+   double bid = t.bid;
+
+   // (أ) انعكاس حي: كانت صاعدة والسعر الآن تحت قاعها بالكامل - الهبوط بدأ من أولاه
+   if(c1 > o1 && bid < lo1)
+      return true;
+
+   // (ب) انعكاس مكتمل: صاعدة ثم هابطة أغلقت تحت إغلاق الصاعدة
+   double o2 = iOpen(_Symbol, InpContextTF, 2), c2 = iClose(_Symbol, InpContextTF, 2);
+   if(o2 <= 0.0 || c2 <= 0.0)
+      return false;
+   return (c2 > o2 && c1 < o1 && c1 < c2);
+  }
+
+//+------------------------------------------------------------------+
+//| صيد الهبوط (3.18): انعكاس واضح على ربع الساعة ثم الدخول مع       |
+//| أول الهبوط - تيك عنيف أو كسر قاع آخر شمعة خمس دقائق              |
 //+------------------------------------------------------------------+
 void UpdateSellHunter()
   {
@@ -391,7 +423,7 @@ void UpdateSellHunter()
       return;
    double bid = t.bid;
 
-   // (3.14) إشارة البيع بعد اكتمال 10 شموع صعود متتالية - صيد الهبوط القادم بعد موجة الصعود الطويلة
+   // (3.14) إشارة البيع بعد اكتمال شموع صعود متتالية (معطلة افتراضياً - كانت 10)
    // مرة واحدة لكل موجة: لا تكرار حتى تنقطع الشموع الصاعدة بشمعة هابطة ثم تبدأ موجة جديدة
    if(InpSellAfterBullCandles > 0)
      {
@@ -406,31 +438,31 @@ void UpdateSellHunter()
         }
      }
 
-   // القاع المرجعي (3.17): أدنى قاع لآخر InpBreakLookback شمعة مكتملة من فريم الصيد InpBreakTF (خمس دقائق بأمر المستخدم)
-   double lowest = DBL_MAX;
-   int lb = (InpBreakLookback >= 1) ? InpBreakLookback : 1;
-   for(int i = 1; i <= lb; i++)
-     {
-      double lo = iLow(_Symbol, InpBreakTF, i);
-      if(lo > 0.0 && lo < lowest)
-         lowest = lo;
-     }
-   if(lowest == DBL_MAX)
-      return;
-
    // بيع مفتوح بالفعل؟ لا إشارات ولا رسائل جديدة
    int haveBuy = 0, haveSell = 0;
    CountMyPositions(haveBuy, haveSell);
    if(haveSell >= InpMaxPositions)
       return;
 
-   // (3.13) القانون السريع: أول تيك يكسر القاع = بيع في نفس التيك
-   if(bid < lowest)
+   // (3.18) البوابة الإلزامية: لا بيع بدون انعكاس سعري واضح على ربع الساعة
+   if(!ClearBearishReversal())
+      return;
+
+   // (3.18) إشارة 1 - التقاط الهبوط من أول تيك: انعكاس واضح + تيك هبوط عنيف = بيع فوري
+   if(InpInstantSpikeEntry && g_lastTickSpike)
      {
-      g_brokenLevel   = lowest;
       g_sellDropReady = true;
-      PrintFormat("PainX EA (3.17): كسر قاع آخر %d شمعة %s عند %s - دخول بيع فوري في نفس التيك.",
-                  lb, TFName(InpBreakTF), DoubleToString(lowest, _Digits));
+      return;
+     }
+
+   // (3.18) إشارة 2 - كسر قاع آخر شمعة خمس دقائق مكتملة أثناء الانعكاس = بيع فوري
+   double lo5 = iLow(_Symbol, InpBreakTF, 1);
+   if(lo5 > 0.0 && bid < lo5)
+     {
+      g_brokenLevel   = lo5;
+      g_sellDropReady = true;
+      PrintFormat("PainX EA (3.18): انعكاس واضح على %s + كسر قاع آخر شمعة %s عند %s - دخول بيع مع بداية الهبوط.",
+                  TFName(InpContextTF), TFName(InpBreakTF), DoubleToString(lo5, _Digits));
      }
   }
 
@@ -937,8 +969,10 @@ string EntryBlockReason()
       return "بانتظار أول شمعة دقيقة صاعدة لفتح شراء الارتداد (3.14)";
    if(InpEntryMode == ENTRY_BREAK_RETEST)
      {
+      if(!ClearBearishReversal())
+         return "لا انعكاس سعري واضح على " + TFName(InpContextTF) + " بعد - البيع بانتظار الانعكاس (3.18)";
       if(InpInstantSpikeEntry && g_lastTickSpike)
-         return "تيك هبوط عنيف الآن - دخول بيع فوري!";
+         return "انعكاس واضح + تيك هبوط عنيف الآن - دخول بيع فوري!";
       if(InpSellAfterBullCandles > 0 && !g_soldThisRun)
         {
          int runNow = CountBullishRun(50);
@@ -946,8 +980,8 @@ string EntryBlockReason()
             return "موجة صعود جارية: " + IntegerToString(runNow) + "/" + IntegerToString(InpSellAfterBullCandles) + " شمعة - البيع عند الاكتمال";
         }
       if(g_sellDropReady)
-         return "إشارة بيع نشطة الآن - دخول فوري!";
-      return "بانتظار كسر قاع آخر شمعة " + TFName(InpBreakTF) + " أو تيك هبوط عنيف (3.17)";
+         return "انعكاس واضح + كسر قاع " + TFName(InpBreakTF) + " - دخول بيع فوري!";
+      return "انعكاس " + TFName(InpContextTF) + " واضح - بانتظار تيك عنيف أو كسر قاع آخر شمعة " + TFName(InpBreakTF) + " (3.18)";
      }
    if(InpEntryMode == ENTRY_CRASH_RIDE)
      {
@@ -992,8 +1026,8 @@ void UpdatePanel()
       state = "منطقة متأخرة (سبايك متأخر)";
 
    string s = "";
-   s += "===== PainX EA v3.17 (هبوط فقط على فريم خمس دقائق | اللوت مثبت) =====\n";
-   s += "الرمز: " + _Symbol + " | هبوط فقط - صيد الهبوط على فريم خمس دقائق (3.17)\n";
+   s += "===== PainX EA v3.18 (بيع بعد انعكاس واضح | اللوت مثبت) =====\n";
+   s += "الرمز: " + _Symbol + " | هبوط فقط - انعكاس ربع ساعة وخمس دقائق ثم الدخول مع أول الهبوط (3.18)\n";
    s += "-----------------------------------------\n";
    s += "اللوت: " + DoubleToString(g_lot, 2) + " (مثبت 0.1 - لا يتغير)\n";
    s += "الخسارة القصوى: " + DoubleToString(InpStopLossUSD, 2) + "$ (ستوب عند " + DoubleToString(g_slPoints, 0) + " نقطة)\n";
@@ -1004,21 +1038,24 @@ void UpdatePanel()
    s += "تيكات منذ آخر سبايك هابط: " + IntegerToString(g_ticksSince) + "\n";
    s += "نافذة الدخول: [" + IntegerToString(start) + " .. " + IntegerToString(end) + "] تيك\n";
    s += "الحالة: " + state + "\n";
-   string modeStr = (InpEntryMode == ENTRY_BREAK_RETEST) ? "بيع فقط على الهابط: كسر القاع + السبايك (3.15)" :
+   string modeStr = (InpEntryMode == ENTRY_BREAK_RETEST) ? "قانون الانعكاس الواضح: ربع ساعة + خمس دقائق (3.18)" :
                     ((InpEntryMode == ENTRY_CRASH_RIDE) ? "صيد الانهيار الحي" : "نافذة الاستحقاق");
    s += "نمط الدخول: " + modeStr + "\n";
    if(InpEntryMode == ENTRY_BREAK_RETEST)
      {
-      int lbShow = (InpBreakLookback >= 1) ? InpBreakLookback : 1;
       int runShow = CountBullishRun(50);
-      string ph = g_sellDropReady
-                ? ("إشارة بيع نشطة - دخول فوري!")
-                : ((InpSellAfterBullCandles > 0 && runShow > 0)
-                   ? ("موجة صعود " + IntegerToString(runShow) + "/" + IntegerToString(InpSellAfterBullCandles) + " شمعة | بانتظار كسر قاع آخر " + IntegerToString(lbShow) + " شمعة " + TFName(InpBreakTF))
-                   : ("بانتظار كسر قاع آخر " + IntegerToString(lbShow) + " شمعة " + TFName(InpBreakTF) + " - الكسر يفتح البيع فوراً"));
+      string ph;
+      if(!ClearBearishReversal())
+         ph = ((InpSellAfterBullCandles > 0 && runShow > 0)
+               ? ("موجة صعود " + IntegerToString(runShow) + "/" + IntegerToString(InpSellAfterBullCandles) + " شمعة | لا انعكاس واضح على " + TFName(InpContextTF) + " بعد")
+               : ("لا انعكاس سعري واضح على " + TFName(InpContextTF) + " بعد - انتظار الانعكاس أولاً"));
+      else if(g_sellDropReady)
+         ph = "انعكاس واضح - إشارة بيع نشطة - دخول فوري!";
+      else
+         ph = "انعكاس " + TFName(InpContextTF) + " واضح - بانتظار تيك عنيف أو كسر قاع آخر شمعة " + TFName(InpBreakTF);
       s += "صيد البيع: " + ph + "\n";
      }
-   s += "سرعة الالتقاط: " + ((InpInstantSpikeEntry) ? "دخول بيع فوري على أول تيك هبوط عنيف (في كل الأنماط)" : "انتظار اكتمال نافذة الانهيار") + "\n";
+   s += "سرعة الالتقاط: " + ((InpInstantSpikeEntry) ? "تيك هبوط عنيف يدخل فوراً - لكن فقط أثناء انعكاس واضح على " + TFName(InpContextTF) + " (3.18)" : "انتظار اكتمال نافذة الانهيار") + "\n";
    if(InpUseBuyAfterSell)
       s += "البيع أثناء الشراء المفتوح: " + ((InpSellWhileBuy) ? "مسموح - لا هبطة تضيع" : "معطل") + "\n";
    string prot = "";
@@ -1151,10 +1188,10 @@ int OnInit()
       PrintFormat("PainX EA (3.12): عتبة التيك العنيف الفوري = %.0f نقطة | نافذة الكشف = %d تيك بحد أدنى %.0f نقطة - أي هبوط يتجاوزها يدخل فوراً في كل الأنماط.",
                   g_spikeAutoPts, InpCrashLookback, InpCrashMult * g_avgTickPts);
 
-   // (3.13) صيد البيع السريع - لا عتبات تصحيح: الكسر نفسه هو الإشارة
+   // (3.18) قانون الانعكاس الواضح
    if(InpEntryMode == ENTRY_BREAK_RETEST)
-      PrintFormat("PainX EA (3.17): صيد الهبوط على فريم %s = كسر قاع آخر %d شمعة يفتح البيع فوراً في نفس التيك - بدون انتظار تصحيح أو تأكيد هبوط. السبايك العنيف يدخل فوراً أيضاً. هبوط فقط.",
-                  TFName(InpBreakTF), ((InpBreakLookback >= 1) ? InpBreakLookback : 1));
+      PrintFormat("PainX EA (3.18): قانون الانعكاس الواضح - لا بيع إلا بعد انعكاس سعري واضح على فريم %s (حي: السعر كسر قاع آخر شمعة صاعدة | مكتمل: صاعدة ثم هابطة أغلقت تحت نهاية الصعود). ثم الدخول مع أول الهبوط: تيك هبوط عنيف أو كسر قاع آخر شمعة %s.",
+                  TFName(InpContextTF), TFName(InpBreakTF));
    // (3.14) إشارة البيع بعد موجة الصعود
    if(InpEntryMode == ENTRY_BREAK_RETEST && InpSellAfterBullCandles > 0)
       PrintFormat("PainX EA (3.14): إشارة بيع إضافية - بعد اكتمال %d شمعة صعود متتالية يفتح بيعاً لصيد الهبوط القادم (مرة واحدة لكل موجة صعود).", InpSellAfterBullCandles);
@@ -1181,12 +1218,12 @@ int OnInit()
    g_curDay     = dt.day_of_year;
    g_dayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-   PrintFormat("PainX EA v3.17 بدأ | الرمز=%s | هبوط فقط على فريم %s: كسر القاع + السبايك الفوري | لوت=%.2f مثبت | خسارة=%.2f$ | هدف=%.2f$ | حماية الأرباح=%s",
-               _Symbol, TFName(InpBreakTF), g_lot, InpStopLossUSD, InpTakeProfitUSD,
+   PrintFormat("PainX EA v3.18 بدأ | الرمز=%s | بيع بعد انعكاس واضح على %s وخمس الدقائق - الدخول مع أول الهبوط | لوت=%.2f مثبت | خسارة=%.2f$ | هدف=%.2f$ | حماية الأرباح=%s",
+               _Symbol, TFName(InpContextTF), g_lot, InpStopLossUSD, InpTakeProfitUSD,
                ((InpUseBreakEven || InpUseTrailing) ? "مفعلة" : "معطلة"));
-   PrintFormat("PainX EA (3.17): هبوط فقط بأمر المستخدم - لا شراء ولا بيع أثناء موجات الصعود. الدخول على فريم %s فقط: كسر قاع آخر شمعة = بيع فوري + أول تيك هبوط عنيف = بيع فوري. كل آليات التوقف ما زالت ملغاة.", TFName(InpBreakTF));
+   PrintFormat("PainX EA (3.18): هبوط فقط بأمر المستخدم - لا بيع إلا بعد انعكاس سعري واضح على فريم %s، ثم الدخول مع أول الهبوط (تيك عنيف أو كسر قاع %s). كل آليات التوقف ما زالت ملغاة.", TFName(InpContextTF), TFName(InpBreakTF));
    Print("PainX EA v3.11: الستوب يتبع السعر من أول سنت ربح - يحجز 75% من أي ربح لحظياً بخطوة 0.01$ ولا يتراجع أبداً (للبيع والشراء).");
-   PrintFormat("PainX EA (3.17): سرعة الالتقاط القصوى - إشارتا هبوط على فريم %s فقط: كسر قاع آخر شمعة + أول تيك هبوط عنيف. كل آليات التوقف ما زالت ملغاة.", TFName(InpBreakTF));
+   PrintFormat("PainX EA (3.18): سرعة الالتقاط - التيك العنيف يدخل فوراً لكن فقط أثناء انعكاس واضح على %s (بدون الانعكاس لا توجد صفقات غلط).", TFName(InpContextTF));
    if(InpUseBuyAfterSell)
       PrintFormat("PainX EA v3.14: الشراء بعد البيع مفعّل - ينتظر أول شمعة دقيقة صاعدة بعد إغلاق البيع ثم يدخل ويخرج بعد %d شمعات أو %d شموع صعود متتالية | ستوب الشراء=%.2f$ | حماية الأرباح تعمل على الشراء أيضاً.", InpBuyCandlesM1, InpBuyUpCandles, InpBuyStopUSD);
    if(InpMaxDailyLossPct <= 0.0)
