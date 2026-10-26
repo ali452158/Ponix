@@ -4,7 +4,7 @@
 //|                                                                  |
 //|  المواصفات (حسب الطلب):                                          |
 //|   - يعمل على PainX فقط (يرفض أي رمز آخر)                        |
-//|   - بيع بعد انعكاس واضح (3.18) + شراء الارتداد بهدف 5$ (3.19) - ستوب 2$ لكل الصفقات|
+//|   - بيع بعد انعكاس واضح (3.18) + شراء الارتداد بهدف 5$ - ستوب 2$ ثابت لا يتحرك (3.20)|
 //|   - لوت ثابت 0.1 (الحد الأدنى للمنصة)                                               |
 //|   - خسارة قصوى 2 دولار (ستوب دولاري - أمر المستخدم 3.19)                            |
 //|   - هدف البيع 10 دولارات | هدف الشراء 5 دولارات (أمر المستخدم 3.19)                      |
@@ -22,6 +22,7 @@
 //|   - جديد 3.17: صيد الهبوط على فريم خمس دقائق بأمر المستخدم - القاع المرجعي = قاع آخر شمعة M5 مكتملة (مدخل InpBreakTF) - كسرها = بيع فوري | هبوط فقط
 //|   - جديد 3.18: قانون الانعكاس الواضح بأمر المستخدم - لا بيع إلا بعد انعكاس سعري واضح على ربع الساعة (حي: السعر كسر قاع آخر شمعة صاعدة | مكتمل: صاعدة ثم هابطة أغلقت تحت نهاية الصعود) ثم الدخول مع أول الهبوط (تيك عنيف أو كسر قاع خمس دقائق)
 //|   - جديد 3.19: ملف المخاطر الجديد بأمر المستخدم - ستوب 2$ لكل الصفقات (كان 3$) | هدف الشراء 5$ (جديد) | هدف البيع 10$ كما هو | إعادة تفعيل دورة شراء الارتداد
+//|   - جديد 3.20: إلغاء الستوب المتحرك وقفل التعادل نهائياً بأمر المستخدم - الستوب ثابت 2$ لا يتحرك إطلاقاً - الصفقة تُغلق عند الهدف فقط (شراء 5$ / بيع 10$) ثم يدخل الصفقة التالية تلقائياً
 //|   - جديد 3.06: إلغاء كل آليات التوقف بأمر المستخدم - بلا فاصل بين الصفقات، بلا حد صفقات يومي، بلا انتظار بعد الخسارة، بلا حد خسارة يومي - البوت يعمل دائماً مهما كانت الخسارة
 //|   - 3.05: إلغاء التوقف اليومي | 3.04: ستوب متحرك 75% | 3.03: حجز 50% | 3.02: عتبة سبايك تلقائية + قفل الاستحقاق | 3.01: لوت 0.1 + قفل تعادل + تتبع أرباح     |
 //|                                                                  |
@@ -29,8 +30,8 @@
 //|     تجريبي أولاً ولا تخاطر بمال لا تتحمل خسارته.                 |
 //+------------------------------------------------------------------+
 #property copyright "PainX Sell EA"
-#property version   "3.19"
-#property description "PainX: بيع بعد انعكاس واضح + شراء الارتداد | ستوب 2$ | هدف البيع 10$ | هدف الشراء 5$ | اللوت مثبت 0.1"
+#property version   "3.20"
+#property description "PainX: بيع بعد انعكاس واضح + شراء الارتداد | ستوب 2$ ثابت لا يتحرك | هدف البيع 10$ | هدف الشراء 5$ | بدون ستوب متحرك"
 
 #include <Trade\Trade.mqh>
 
@@ -91,14 +92,7 @@ input double InpBuyStopUSD        = 2.0;      // ستوب الشراء بالد�
 input double InpBuyTakeProfitUSD  = 5.0;      // هدف الشراء بالدولار (5$ بأمر المستخدم 3.19 - يغلق الشراء عند 5$)
 input bool   InpSellWhileBuy      = true;     // (3.08) بيع جديد حتى لو الشراء مفتوح - لا تضيع أي هبطة
 
-input group "====== حماية الأرباح (جديد 3.00) ======"
-input bool   InpUseBreakEven        = true;     // قفل التعادل
-input double InpBETriggerUSD        = 2.0;      // تفعيل القفل عند ربح (دولار)
-input int    InpBEBufferPoints      = 30;       // ربح مؤمن عند القفل (نقاط)
-input bool   InpUseTrailing         = true;     // ستوب متحرك يتبع السعر
-input double InpLockStartUSD        = 0.0;      // (3.09) بدء تتبع السعر من أول ربح (0 = من أول سنت - كانت 1.0)
-input double InpLockPct             = 75.0;     // نسبة الحجز من الربح % (75 = كل دولار يحجز 75 سنت لحظياً)
-input double InpTrailStepUSD        = 0.01;     // (3.09) أدنى تحسين لتحديث الستوب (0.01 = يتبع السعر لحظياً)
+// (3.20) أُلغيت حماية الأرباح نهائياً بأمر المستخدم: لا ستوب متحرك ولا قفل تعادل - الستوب ثابت عند -2$ والصفقة تُغلق عند الهدف فقط
 
 //+------------------------------------------------------------------+
 //| المتغيرات العامة                                                 |
@@ -691,119 +685,7 @@ void ManagePositions()
            }
         }
 
-      // حماية الأرباح: قفل التعادل + التتبع (الجديد في 3.00)
-      ProtectProfit(tk);
-     }
-  }
-
-//+------------------------------------------------------------------+
-//| حماية الأرباح: قفل تعادل + تتبع ستوب (للبيع والشراء)             |
-//+------------------------------------------------------------------+
-void ProtectProfit(const ulong ticket)
-  {
-   if(!InpUseBreakEven && !InpUseTrailing)
-      return;
-   if(!PositionSelectByTicket(ticket))
-      return;
-
-   double open  = PositionGetDouble(POSITION_PRICE_OPEN);
-   double curSL = PositionGetDouble(POSITION_SL);
-   double curTP = PositionGetDouble(POSITION_TP);
-   double pl    = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-   bool   isBuy = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
-
-   MqlTick t;
-   if(!SymbolInfoTick(_Symbol, t))
-      return;
-   double bid = t.bid;
-   double ask = t.ask;
-
-   long   stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
-   double minDist    = MathMax((double)stopsLevel, 1.0) * _Point;
-
-   double newSL  = 0.0;
-   bool   hasNew = false;
-
-   if(isBuy)
-     {
-      // قفل التعادل للشراء: الستوب ينتقل فوق سعر الدخول (ربح مؤمن)
-      if(InpUseBreakEven && pl >= InpBETriggerUSD)
-        {
-         double beSL = NormalizeDouble(open + InpBEBufferPoints * _Point, _Digits);
-         if((bid - beSL) >= minDist && (curSL == 0.0 || beSL > curSL))
-           {
-            newSL  = beSL;
-            hasNew = true;
-           }
-        }
-
-      // الستوب المتحرك للشراء (3.09): يتبع السعر من أول سنت ربح - يحجز 75% والستوب يصعد مع السعر ولا يتراجع أبداً
-      if(InpUseTrailing && pl >= InpLockStartUSD)
-        {
-         double lockUSD = pl * InpLockPct / 100.0;
-         double lockPts = (g_pointValuePos > 0.0) ? (lockUSD / g_pointValuePos) : 0.0;
-         if(lockPts > 0.0)
-           {
-            double trailSL = NormalizeDouble(open + lockPts * _Point, _Digits);
-            if((bid - trailSL) >= minDist && (curSL == 0.0 || trailSL > curSL))
-              {
-               double stepPts = (g_pointValuePos > 0.0) ? (InpTrailStepUSD / g_pointValuePos) : 0.0;
-               if(curSL == 0.0 || (trailSL - curSL) >= stepPts * _Point)
-                 {
-                  if(!hasNew || trailSL > newSL)
-                    {
-                     newSL  = trailSL;
-                     hasNew = true;
-                    }
-                 }
-              }
-           }
-        }
-     }
-   else
-     {
-      // قفل التعادل: عند الربح المحدد، انقل الستوب تحت سعر الدخول (ربح مؤمن)
-      if(InpUseBreakEven && pl >= InpBETriggerUSD)
-        {
-         double beSL = NormalizeDouble(open - InpBEBufferPoints * _Point, _Digits);
-         if((beSL - ask) >= minDist && (curSL == 0.0 || beSL < curSL))
-           {
-            newSL  = beSL;
-            hasNew = true;
-           }
-        }
-
-      // الستوب المتحرك (3.09): يتبع السعر من أول سنت ربح - كل دولار يثبت 75 سنت منه لحظياً
-      // الستوب لا يتراجع أبداً - فيقفل عملياً 75% من أعلى ربح بلغته الصفقة
-      if(InpUseTrailing && pl >= InpLockStartUSD)
-        {
-         double lockUSD = pl * InpLockPct / 100.0;
-         double lockPts = (g_pointValuePos > 0.0) ? (lockUSD / g_pointValuePos) : 0.0;
-         if(lockPts > 0.0)
-           {
-            double trailSL = NormalizeDouble(open - lockPts * _Point, _Digits);
-            if((trailSL - ask) >= minDist && (curSL == 0.0 || trailSL < curSL))
-              {
-               double stepPts = (g_pointValuePos > 0.0) ? (InpTrailStepUSD / g_pointValuePos) : 0.0;
-               if(curSL == 0.0 || (curSL - trailSL) >= stepPts * _Point)
-                 {
-                  if(!hasNew || trailSL < newSL)
-                    {
-                     newSL  = trailSL;
-                     hasNew = true;
-                    }
-                 }
-              }
-           }
-        }
-     }
-
-   if(hasNew && MathAbs(newSL - curSL) > _Point / 2.0)
-     {
-      if(g_trade.PositionModify(ticket, newSL, curTP))
-         PrintFormat("PainX EA: حماية أرباح - ستوب جديد عند %s | الربح العائم=%.2f$", DoubleToString(newSL, _Digits), pl);
-      else
-         PrintFormat("PainX EA: فشل تعديل ستوب الحماية | retcode=%u", g_trade.ResultRetcode());
+      // (3.20) لا حماية أرباح: الستوب ثابت عند -2$ والصفقة تُغلق عند الهدف فقط ثم يدخل الصفقة التالية (أمر المستخدم)
      }
   }
 
@@ -1027,8 +909,8 @@ void UpdatePanel()
       state = "منطقة متأخرة (سبايك متأخر)";
 
    string s = "";
-   s += "===== PainX EA v3.19 (انعكاس واضح | ستوب 2$ | أهداف 10$/5$) =====\n";
-   s += "الرمز: " + _Symbol + " | بيع بعد انعكاس واضح (هدف 10$) + شراء الارتداد (هدف 5$) | ستوب 2$ (3.19)\n";
+   s += "===== PainX EA v3.20 (انعكاس واضح | ستوب 2$ ثابت | أهداف 10$/5$ | بدون ستوب متحرك) =====\n";
+   s += "الرمز: " + _Symbol + " | بيع بعد انعكاس واضح (هدف 10$) + شراء الارتداد (هدف 5$) | ستوب 2$ ثابت (3.20)\n";
    s += "-----------------------------------------\n";
    s += "اللوت: " + DoubleToString(g_lot, 2) + " (مثبت 0.1 - لا يتغير)\n";
    s += "الخسارة القصوى: " + DoubleToString(InpStopLossUSD, 2) + "$ (ستوب عند " + DoubleToString(g_slPoints, 0) + " نقطة)\n";
@@ -1059,12 +941,7 @@ void UpdatePanel()
    s += "سرعة الالتقاط: " + ((InpInstantSpikeEntry) ? "تيك هبوط عنيف يدخل فوراً - لكن فقط أثناء انعكاس واضح على " + TFName(InpContextTF) + " (3.18)" : "انتظار اكتمال نافذة الانهيار") + "\n";
    if(InpUseBuyAfterSell)
       s += "البيع أثناء الشراء المفتوح: " + ((InpSellWhileBuy) ? "مسموح - لا هبطة تضيع" : "معطل") + "\n";
-   string prot = "";
-   if(InpUseBreakEven)
-      prot += "قفل تعادل عند +" + DoubleToString(InpBETriggerUSD, 1) + "$ ";
-   if(InpUseTrailing)
-      prot += "| الستوب يتبع السعر من أول سنت ربح: يحجز " + DoubleToString(InpLockPct, 0) + "% من أي ربح لحظياً (خطوة " + DoubleToString(InpTrailStepUSD, 2) + "$)";
-   s += "حماية الأرباح: " + ((prot == "") ? "معطلة" : prot) + "\n";
+   s += "إدارة الصفقة (3.20): بدون ستوب متحرك - الستوب ثابت عند -2$ والصفقة تُغلق عند الهدف فقط (+5$ شراء / +10$ بيع) ثم يدخل الصفقة التالية تلقائياً\n";
    if(InpUseBuyAfterSell)
       s += "الشراء بعد البيع: مفعّل | يُفتح مع أول شمعة دقيقة صاعدة بعد إغلاق البيع | هدف الشراء " + DoubleToString(InpBuyTakeProfitUSD, 1) + "$ (3.19)" + ((InpBuyCandlesM1 > 0) ? (" | خروج أيضاً بعد " + IntegerToString(InpBuyCandlesM1) + " شمعات") : "") + ((InpBuyUpCandles > 0) ? (" أو " + IntegerToString(InpBuyUpCandles) + " شموع صعود") : "") + " | ستوب الشراء " + DoubleToString(InpBuyStopUSD, 1) + "$\n";
    else
@@ -1219,14 +1096,13 @@ int OnInit()
    g_curDay     = dt.day_of_year;
    g_dayBalance = AccountInfoDouble(ACCOUNT_BALANCE);
 
-   PrintFormat("PainX EA v3.19 بدأ | الرمز=%s | بيع بعد انعكاس واضح على %s وخمس الدقائق | لوت=%.2f مثبت | ستوب=%.2f$ | هدف البيع=%.2f$ | هدف الشراء=%.2f$ | حماية الأرباح=%s",
-               _Symbol, TFName(InpContextTF), g_lot, InpStopLossUSD, InpTakeProfitUSD, InpBuyTakeProfitUSD,
-               ((InpUseBreakEven || InpUseTrailing) ? "مفعلة" : "معطلة"));
+   PrintFormat("PainX EA v3.20 بدأ | الرمز=%s | بيع بعد انعكاس واضح على %s وخمس الدقائق | لوت=%.2f مثبت | ستوب ثابت=%.2f$ لا يتحرك | هدف البيع=%.2f$ | هدف الشراء=%.2f$ | بعد الإغلاق يدخل الصفقة التالية تلقائياً",
+               _Symbol, TFName(InpContextTF), g_lot, InpStopLossUSD, InpTakeProfitUSD, InpBuyTakeProfitUSD);
    PrintFormat("PainX EA (3.18): البيع يتطلب انعكاساً سعرياً واضحاً على فريم %s ثم الدخول مع أول الهبوط (تيك عنيف أو كسر قاع %s). كل آليات التوقف ما زالت ملغاة.", TFName(InpContextTF), TFName(InpBreakTF));
-   Print("PainX EA v3.11: الستوب يتبع السعر من أول سنت ربح - يحجز 75% من أي ربح لحظياً بخطوة 0.01$ ولا يتراجع أبداً (للبيع والشراء).");
+   Print("PainX EA v3.20: أُلغي الستوب المتحرك وقفل التعادل نهائياً بأمر المستخدم - الستوب ثابت عند -2$ ولا يتحرك إطلاقاً، والصفقة تُغلق عند هدفها فقط (شراء +5$ / بيع +10$) ثم يدخل الصفقة التالية تلقائياً.");
    PrintFormat("PainX EA (3.18): سرعة الالتقاط - التيك العنيف يدخل فوراً لكن فقط أثناء انعكاس واضح على %s (بدون الانعكاس لا توجد صفقات غلط).", TFName(InpContextTF));
    if(InpUseBuyAfterSell)
-      PrintFormat("PainX EA (3.19): الشراء بعد البيع مفعّل - ينتظر أول شمعة دقيقة صاعدة بعد إغلاق البيع ثم يدخل | هدف الشراء=%.2f$ | خروج أيضاً بعد %d شمعات أو %d شموع صعود متتالية | ستوب الشراء=%.2f$ | حماية الأرباح تعمل على الشراء أيضاً.", InpBuyTakeProfitUSD, InpBuyCandlesM1, InpBuyUpCandles, InpBuyStopUSD);
+      PrintFormat("PainX EA (3.19): الشراء بعد البيع مفعّل - ينتظر أول شمعة دقيقة صاعدة بعد إغلاق البيع ثم يدخل | هدف الشراء=%.2f$ | خروج أيضاً بعد %d شمعات أو %d شموع صعود متتالية | ستوب الشراء=%.2f$ ثابت لا يتحرك (3.20).", InpBuyTakeProfitUSD, InpBuyCandlesM1, InpBuyUpCandles, InpBuyStopUSD);
    if(InpMaxDailyLossPct <= 0.0)
       Print("PainX EA: حد الخسارة اليومي معطل بأمر المستخدم - البوت يستمر بالتداول مهما كانت الخسارة.");
    return(INIT_SUCCEEDED);
